@@ -1,0 +1,11 @@
+{
+  "name": "parallax",
+  "owner": { "name": "Tate Meyer" },
+  "plugins": [
+    {
+      "name": "plumb",
+      "source": "./plumb",
+      "description": "Perceptual verification: portable capture adapters plus a blinded, adversarial multi-lens reviewer rendering a GO / NO-GO / HOLD verdict."
+    }
+  ]
+}

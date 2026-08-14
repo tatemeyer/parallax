@@ -1,0 +1,6 @@
+{
+  "name": "plumb",
+  "version": "0.1.0",
+  "description": "Perceptual verification for terminal and image output: portable capture adapters plus an adversarial, blinded multi-lens reviewer that renders a GO / NO-GO / HOLD verdict. Sub-project #1 of the Parallax platform.",
+  "author": { "name": "Tate Meyer" }
+}
