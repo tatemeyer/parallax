@@ -4,3 +4,5 @@
 //! everything that can be unit-tested; subagent dispatch belongs to
 //! the orchestrating skill, not here.
 #![warn(missing_docs)]
+
+pub mod config;
