@@ -649,9 +649,15 @@ impl From<serde_yaml::Error> for ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            // CORRECTED DURING EXECUTION — see "Corrections applied during
+            // execution" below. These two lines shipped as written here and
+            // were wrong: they name a path the caller may never have used.
+            // `load_config` takes `path: &Path`; interpolate it.
             ConfigError::Io(e) => write!(f, "reading .plumb/config.yaml: {e}"),
             ConfigError::Yaml(e) => write!(f, "parsing .plumb/config.yaml: {e}"),
             ConfigError::DuplicateScenario(n) => write!(f, "duplicate scenario name: {n}"),
+            // CORRECTED: carries the scenario's index, matching the other
+            // three validation errors, which all name their offender.
             ConfigError::EmptyName => write!(f, "a scenario has an empty name"),
             ConfigError::MissingOutPlaceholder(n) => write!(
                 f,
@@ -4542,6 +4548,53 @@ Non-goals are enforced by the Global Constraints section; no task
 implements golden-image diffing, a browser adapter, macOS/Linux window
 capture, CI integration, prebuilt binaries, or any change to
 `tools/visual-snapshot`.
+
+---
+
+## Corrections applied during execution
+
+Places this plan's own text was found wrong once a task reviewer looked
+at what it produced. Recorded here rather than silently edited, because
+the plan's code blocks are meant to be transcribed verbatim and a
+reader needs to know which ones moved.
+
+**Task 2 — two corrections, both upheld against the plan text by
+operator ruling.** The findings were plan-mandated: the implementer
+transcribed this document correctly, and this document was wrong.
+
+1. **`ConfigError::Io` / `::Yaml` hardcoded `.plumb/config.yaml` in
+   their `Display` messages** while `load_config` takes a `path: &Path`
+   the caller chose. Every test loads from a temporary directory, so
+   the messages were already inaccurate for the function's real call
+   pattern — and the audience for a config error is a human debugging
+   their own file. Corrected to interpolate the actual path.
+
+   The mechanical consequence is worth noting for anyone re-deriving
+   this: `Display` cannot see `path` unless the error carries it, and
+   the obvious fix — widening the variants — would break the property
+   that consumers can match `Err(ConfigError::Yaml(_))` opaquely
+   without naming a `serde_yaml` type. That opacity is exactly what
+   makes `serde_yaml` swappable in one file, which is why it was
+   chosen despite being archived upstream. Preserved by keeping both
+   as single-field tuple variants wrapping new `IoFailure` /
+   `YamlFailure` structs.
+
+2. **`ConfigError::EmptyName` had no test.** The rule is enforced at
+   the line this plan specifies, but the plan's eight-test list for
+   Task 2 never asked for a ninth test covering it — an enforced
+   validation rule with a dead test path, under a policy where TDD is
+   mandatory and this task claims no exception. Added.
+
+   The Minor finding folded into the same fix: `EmptyName`'s message
+   now names the offending scenario by index, matching the other three
+   validation errors. The name itself is unavailable, that being the
+   defect being reported.
+
+**Lesson for the remaining tasks.** Both defects are the same species —
+a plan that specifies an error variant and its enforcement, but forgets
+that an error is a user interface and that an enforced rule needs a
+test. Worth checking for directly in later tasks that define error
+types, rather than waiting for a reviewer to find each one.
 
 ---
 
