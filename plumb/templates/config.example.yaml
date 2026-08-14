@@ -1,0 +1,24 @@
+# .plumb/config.yaml — what to capture, and what each capture is for.
+scenarios:
+  - name: example-scenario
+    # One of: command | pty | window(deferred, no v1 implementation)
+    adapter: command
+    # {out} is substituted with this run's output stem (no extension).
+    args: >
+      your-capture-command --out {out}.png
+    # What this capture is supposed to show. The intent lens checks
+    # against this, and only this. Omit it and the intent lens is
+    # skipped with a notice.
+    intent: >
+      Describe the screen as someone who has never seen it would need.
+    # Distortion this scenario declares intentional. Only
+    # `visual-corruption` is defined. Omit it and garbled output is a
+    # defect — the burden is on the scenario to claim the exemption.
+    expects: []
+    # Optional, design lens only: an additive, scenario-scoped note on
+    # top of taste.md.
+    # taste_override: >
+    #   This screen is deliberately scruffier than the house grammar.
+    # Changed paths that make this scenario worth reviewing.
+    touches:
+      - src/**

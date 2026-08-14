@@ -4,9 +4,10 @@
 
 use crate::config::Config;
 use globset::{Glob, GlobSetBuilder};
+use serde::Serialize;
 
 /// A scenario chosen for review, with the changed paths that chose it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Selected {
     /// The scenario's name.
     pub name: String,
@@ -16,7 +17,7 @@ pub struct Selected {
 }
 
 /// The outcome of a selection pass.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Selection {
     /// Scenarios to capture, in config order.
     pub selected: Vec<Selected>,
