@@ -5,6 +5,7 @@
 //! the orchestrating skill, not here.
 #![warn(missing_docs)]
 
+pub mod adapter;
 pub mod config;
 pub mod manifest;
 pub mod select;
