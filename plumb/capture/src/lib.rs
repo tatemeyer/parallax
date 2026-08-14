@@ -7,5 +7,6 @@
 
 pub mod adapter;
 pub mod config;
+pub mod finding;
 pub mod manifest;
 pub mod select;
