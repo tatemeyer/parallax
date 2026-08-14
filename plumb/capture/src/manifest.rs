@@ -48,20 +48,45 @@ pub struct RunManifest {
     pub caveats: Vec<Caveat>,
 }
 
+/// An I/O failure reading a manifest, together with the path that
+/// caused it — kept as a single field so `ManifestError::Io(_)` stays
+/// an opaque, one-wildcard match for callers that only care *that* it
+/// failed, not why. Mirrors `config::IoFailure`.
+#[derive(Debug)]
+pub struct IoFailure {
+    /// The path `read_manifest` was asked to read.
+    pub path: PathBuf,
+    /// The underlying I/O error.
+    pub source: std::io::Error,
+}
+
+/// A JSON parse failure, together with the path that caused it — kept
+/// as a single field for the same reason as [`IoFailure`]: it keeps
+/// `ManifestError::Json(_)` an opaque match, which is what lets
+/// `serde_json` stay swappable behind this module alone. Mirrors
+/// `config::YamlFailure`.
+#[derive(Debug)]
+pub struct JsonFailure {
+    /// The path `read_manifest` was asked to read.
+    pub path: PathBuf,
+    /// The underlying JSON error.
+    pub source: serde_json::Error,
+}
+
 /// Failure reading or parsing a manifest.
 #[derive(Debug)]
 pub enum ManifestError {
-    /// Filesystem failure.
-    Io(std::io::Error),
-    /// Not valid JSON, or not this schema.
-    Json(serde_json::Error),
+    /// Filesystem failure reading the file, and the path that caused it.
+    Io(IoFailure),
+    /// Not valid JSON, or not this schema; and the path that caused it.
+    Json(JsonFailure),
 }
 
 impl std::fmt::Display for ManifestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ManifestError::Io(e) => write!(f, "reading run manifest: {e}"),
-            ManifestError::Json(e) => write!(f, "parsing run manifest: {e}"),
+            ManifestError::Io(e) => write!(f, "reading {}: {}", e.path.display(), e.source),
+            ManifestError::Json(e) => write!(f, "parsing {}: {}", e.path.display(), e.source),
         }
     }
 }
@@ -82,8 +107,18 @@ pub fn write_manifest(m: &RunManifest, dir: &Path) -> std::io::Result<PathBuf> {
 
 /// Reads a manifest written by `write_manifest`.
 pub fn read_manifest(path: &Path) -> Result<RunManifest, ManifestError> {
-    let text = std::fs::read_to_string(path).map_err(ManifestError::Io)?;
-    serde_json::from_str(&text).map_err(ManifestError::Json)
+    let text = std::fs::read_to_string(path).map_err(|source| {
+        ManifestError::Io(IoFailure {
+            path: path.to_path_buf(),
+            source,
+        })
+    })?;
+    serde_json::from_str(&text).map_err(|source| {
+        ManifestError::Json(JsonFailure {
+            path: path.to_path_buf(),
+            source,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -151,8 +186,9 @@ mod tests {
         }
     }
 
-    /// A `ManifestError` is a user interface: its message must say
-    /// *what kind* of failure occurred, not just that one did.
+    /// A `ManifestError` is a user interface: a run directory holds one
+    /// manifest per scenario, so its message must name *which path*
+    /// failed to parse — not just that some manifest did.
     #[test]
     fn read_manifest_reports_the_offending_path_on_failure() {
         let dir = tempfile::tempdir().unwrap();
@@ -161,17 +197,23 @@ mod tests {
         let err = read_manifest(&path).unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("parsing run manifest"),
-            "error message should describe the failure: {msg}"
+            msg.contains(&path.display().to_string()),
+            "error message should name the offending path {path:?}: {msg}"
         );
     }
 
+    /// Same as above for the I/O variant: the message must name the
+    /// specific missing path, not just that reading failed.
     #[test]
     fn read_manifest_missing_file_names_the_failure_kind() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing.manifest.json");
         let err = read_manifest(&path).unwrap_err();
         assert!(matches!(err, ManifestError::Io(_)));
-        assert!(err.to_string().contains("reading run manifest"));
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&path.display().to_string()),
+            "error message should name the offending path {path:?}: {msg}"
+        );
     }
 }
