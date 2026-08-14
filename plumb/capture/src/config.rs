@@ -2,7 +2,7 @@
 //! defines what gets captured, what each capture is for, and which
 //! source paths make it relevant. Deliberately holds no runtime state.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Which capture adapter runs a scenario.
@@ -20,7 +20,11 @@ pub enum AdapterKind {
 
 /// A distortion a scenario declares as intentional, exempting it from
 /// the breakage lens. Unknown values are a parse error by design.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+///
+/// `Serialize` is derived (alongside `Deserialize`) so this can appear
+/// in `RunManifest`, which the manifest module writes out as JSON for
+/// a lens agent to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Expectation {
     /// Glyph garbling and region displacement are this scenario's point.
