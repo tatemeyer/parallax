@@ -3,7 +3,7 @@
 //! source paths make it relevant. Deliberately holds no runtime state.
 
 use serde::Deserialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Which capture adapter runs a scenario.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -62,38 +62,54 @@ pub struct Config {
     pub scenarios: Vec<Scenario>,
 }
 
+/// An I/O failure reading a config file, together with the path that
+/// caused it — kept as a single field so `ConfigError::Io(_)` stays an
+/// opaque, one-wildcard match for callers that only care *that* it
+/// failed, not why.
+#[derive(Debug)]
+pub struct IoFailure {
+    /// The path `load_config` was asked to read.
+    pub path: PathBuf,
+    /// The underlying I/O error.
+    pub source: std::io::Error,
+}
+
+/// A YAML parse failure, together with the path that caused it — kept
+/// as a single field for the same reason as [`IoFailure`]: it keeps
+/// `ConfigError::Yaml(_)` an opaque match, which is what lets
+/// `serde_yaml` stay swappable behind this module alone.
+#[derive(Debug)]
+pub struct YamlFailure {
+    /// The path `load_config` was asked to read.
+    pub path: PathBuf,
+    /// The underlying YAML error.
+    pub source: serde_yaml::Error,
+}
+
 /// Failure reading, parsing, or validating a config file.
 #[derive(Debug)]
 pub enum ConfigError {
-    /// Filesystem failure reading the file.
-    Io(std::io::Error),
-    /// The file is not valid YAML, or not this schema.
-    Yaml(serde_yaml::Error),
+    /// Filesystem failure reading the file, and the path that caused it.
+    Io(IoFailure),
+    /// The file is not valid YAML, or not this schema; and the path
+    /// that caused it.
+    Yaml(YamlFailure),
     /// Two scenarios share a name.
     DuplicateScenario(String),
-    /// A scenario has an empty name.
-    EmptyName,
+    /// A scenario has an empty name; carries its zero-based index in
+    /// the file, since the name itself can't identify it.
+    EmptyName(usize),
     /// A `command` scenario's `args` has no `{out}` placeholder.
     MissingOutPlaceholder(String),
 }
 
-impl From<std::io::Error> for ConfigError {
-    fn from(e: std::io::Error) -> Self {
-        ConfigError::Io(e)
-    }
-}
-impl From<serde_yaml::Error> for ConfigError {
-    fn from(e: serde_yaml::Error) -> Self {
-        ConfigError::Yaml(e)
-    }
-}
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigError::Io(e) => write!(f, "reading .plumb/config.yaml: {e}"),
-            ConfigError::Yaml(e) => write!(f, "parsing .plumb/config.yaml: {e}"),
+            ConfigError::Io(e) => write!(f, "reading {}: {}", e.path.display(), e.source),
+            ConfigError::Yaml(e) => write!(f, "parsing {}: {}", e.path.display(), e.source),
             ConfigError::DuplicateScenario(n) => write!(f, "duplicate scenario name: {n}"),
-            ConfigError::EmptyName => write!(f, "a scenario has an empty name"),
+            ConfigError::EmptyName(i) => write!(f, "scenario at index {i} has an empty name"),
             ConfigError::MissingOutPlaceholder(n) => write!(
                 f,
                 "scenario {n}: `command` adapter args must contain the {{out}} placeholder"
@@ -105,12 +121,22 @@ impl std::error::Error for ConfigError {}
 
 /// Reads, parses, and validates a `.plumb/config.yaml`.
 pub fn load_config(path: &Path) -> Result<Config, ConfigError> {
-    let text = std::fs::read_to_string(path)?;
-    let config: Config = serde_yaml::from_str(&text)?;
+    let text = std::fs::read_to_string(path).map_err(|source| {
+        ConfigError::Io(IoFailure {
+            path: path.to_path_buf(),
+            source,
+        })
+    })?;
+    let config: Config = serde_yaml::from_str(&text).map_err(|source| {
+        ConfigError::Yaml(YamlFailure {
+            path: path.to_path_buf(),
+            source,
+        })
+    })?;
     let mut seen: Vec<&str> = Vec::new();
-    for s in &config.scenarios {
+    for (i, s) in config.scenarios.iter().enumerate() {
         if s.name.trim().is_empty() {
-            return Err(ConfigError::EmptyName);
+            return Err(ConfigError::EmptyName(i));
         }
         if seen.contains(&s.name.as_str()) {
             return Err(ConfigError::DuplicateScenario(s.name.clone()));
@@ -233,6 +259,42 @@ scenarios:
         assert_eq!(
             load_config(&p).unwrap().scenarios[0].adapter,
             AdapterKind::Window
+        );
+    }
+
+    #[test]
+    fn an_empty_scenario_name_is_rejected_with_its_index() {
+        // The second scenario (index 1) is the offender; the message
+        // must be able to say *which* one since the name itself, by
+        // definition, can't be used to identify it.
+        let (_d, p) = write(
+            "scenarios:\n  - name: a\n    adapter: command\n    args: 'x {out}.png'\n    touches: ['src/**']\n  - name: ''\n    adapter: command\n    args: 'y {out}.png'\n    touches: ['src/**']\n",
+        );
+        assert!(matches!(load_config(&p), Err(ConfigError::EmptyName(1))));
+    }
+
+    #[test]
+    fn io_error_message_names_the_actual_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist.yaml");
+        let err = load_config(&missing).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&missing.display().to_string()),
+            "message did not name the real path: {msg}"
+        );
+    }
+
+    #[test]
+    fn yaml_error_message_names_the_actual_path() {
+        let (_d, p) = write(
+            "scenarios:\n  - name: a\n    adapter: command\n    args: 'x {out}.png'\n    expects: [visual-corrupton]\n    touches: ['src/**']\n",
+        );
+        let err = load_config(&p).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&p.display().to_string()),
+            "message did not name the real path: {msg}"
         );
     }
 }
