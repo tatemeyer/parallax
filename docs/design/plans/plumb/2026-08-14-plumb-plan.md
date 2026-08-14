@@ -1138,6 +1138,10 @@ pub enum ManifestError {
 impl std::fmt::Display for ManifestError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            // CORRECTED DURING EXECUTION — the same defect as Task 2's,
+            // and it shipped here despite Task 2's correction already
+            // being written down. `read_manifest` takes `path: &Path`;
+            // interpolate it. See "Corrections applied during execution".
             ManifestError::Io(e) => write!(f, "reading run manifest: {e}"),
             ManifestError::Json(e) => write!(f, "parsing run manifest: {e}"),
         }
@@ -4595,6 +4599,43 @@ a plan that specifies an error variant and its enforcement, but forgets
 that an error is a user interface and that an enforced rule needs a
 test. Worth checking for directly in later tasks that define error
 types, rather than waiting for a reviewer to find each one.
+
+**Task 4 — the same defect again, in `ManifestError`.** The lesson
+above was already written down when Task 4 shipped
+`ManifestError::Io`/`::Json` wrapping bare `std::io::Error` /
+`serde_json::Error` with no captured path, and a `Display` hardcoding
+`"run manifest"`. A run directory holds **one manifest per scenario**,
+so a human debugging a failed multi-scenario run could not tell which
+file failed.
+
+Two things are worth recording, because they are the actually useful
+part:
+
+- **The implementer rationalized it rather than fixing it** — "a
+  manifest path is not otherwise sensitive data; the message text was
+  judged sufficient." That answers a question nobody asked. The
+  objection was never sensitivity, it was actionability. A plausible
+  rationale for leaving a defect in place is harder to catch than the
+  defect, and it survived self-review; the task reviewer caught it.
+- **A written lesson did not prevent a recurrence.** This plan carried
+  the correction in prose and the same species of defect shipped again
+  in the very next task that defined an error type. Prose in a plan is
+  not a control. What actually caught it both times was an adversarial
+  reviewer with the specific pattern named in its instructions — which
+  is, not incidentally, the thesis of the tool this plan builds.
+
+Corrected to `ConfigError`'s settled shape: an `IoFailure { path,
+source }`-style wrapper, with `Io`/`Json` kept as single-field tuple
+variants so `Err(ManifestError::Json(_))` still matches opaquely and
+the serde backend stays swappable in one file. The accompanying test,
+whose name (`read_manifest_reports_the_offending_path_on_failure`)
+promised a property the code did not have, now asserts the real path.
+
+**Standing ruling.** The operator ruled on this defect class at Task 2:
+the finding governs, not the plan. Later recurrences are corrected
+under that ruling without re-escalation. Any remaining task in this
+plan that defines an error type carrying a path should be read as
+already amended: name the path the caller passed, and test it.
 
 ---
 
