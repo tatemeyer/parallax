@@ -21,7 +21,16 @@ pub(super) fn skeleton(manifest: &RunManifest, lens_section: &str) -> String {
     s.push_str("One image and the run manifest below. Read the image. That is your\n");
     s.push_str("entire evidence base. You cannot see how it was produced, and you must\n");
     s.push_str("not reason about how it was probably produced. Reason only from pixels.\n\n");
-    s.push_str(&format!("Image: {}\n", manifest.image.display()));
+    // File name only: a full or absolute path would carry a run
+    // directory and, on an absolute path, the project's own tree — a
+    // blinding leak the manifest's own serialization test already
+    // guards against for `args`/`touches`.
+    let image_name = manifest
+        .image
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| manifest.image.display().to_string());
+    s.push_str(&format!("Image: {image_name}\n"));
     s.push_str(&format!(
         "Frames: {} ({})\n",
         manifest.frame_count,
@@ -71,7 +80,7 @@ pub(super) fn skeleton(manifest: &RunManifest, lens_section: &str) -> String {
     s.push_str("If you have nothing to report, return exactly:\n\n");
     s.push_str("[]\n\n");
     s.push_str("`region` is mandatory. A finding whose region you cannot fill in\n");
-    s.push_str("concretely is dropped before anyone reads it — so do not submit it.\n");
+    s.push_str("concretely is dropped without being read — so do not submit it.\n");
     s
 }
 
@@ -110,8 +119,12 @@ fn distortion_block(expects: &[Expectation]) -> String {
             "displacement are the point here, not a defect. Do not raise findings for it.\n\n",
         );
         s.push_str("Two bounds still hold:\n\n");
-        s.push_str("- This excuses a *category*, not a *region*. It excuses garbling; it does not excuse a panel that failed to draw, a border that does not close, or content clipped by an edge.\n");
-        s.push_str("- It is still bound by legibility. A glitch that momentarily disturbs a reading is the feature; one that permanently destroys a reading across the whole capture is a defect, and you must still report it.\n");
+        s.push_str("- This excuses a *category*, not a *region*. It excuses garbling; it\n");
+        s.push_str("  does not excuse a panel that failed to draw, a border that does not\n");
+        s.push_str("  close, or content clipped by an edge.\n");
+        s.push_str("- It is still bound by legibility. A glitch that momentarily disturbs\n");
+        s.push_str("  a reading is the feature; one that permanently destroys a reading\n");
+        s.push_str("  across the whole capture is a defect, and you must still report it.\n");
     } else {
         s.push_str("This scenario declares no intentional distortion. Garbled glyphs and\n");
         s.push_str("displaced regions are defects here. Report them.\n");
@@ -134,32 +147,60 @@ pub(super) fn intent_section(intent: &str) -> String {
 }
 
 /// The design lens's section: `taste.md` verbatim, its scenario-scoped
-/// override when present, the profile-wins rule, and the (major, advisory)
-/// severity ceiling.
+/// override when present, an explicit instruction to abstain rather
+/// than fall back to stock UI advice where the profile is silent, the
+/// spec's own low-confidence exemplar, the profile-wins rule, and the
+/// (major, advisory) severity ceiling. With no profile declared at
+/// all, renders [`no_taste_profile_section`] instead — never a blank
+/// "taste, verbatim:" that would read as a generic aesthetic opinion.
 pub(super) fn design_section(taste: Option<&str>, taste_override: Option<&str>) -> String {
+    let Some(taste) = taste else {
+        return no_taste_profile_section();
+    };
     let mut s = String::new();
     s.push_str("## What you are looking for (design)\n\n");
     s.push_str("This project's declared taste, verbatim:\n\n");
-    s.push_str(taste.unwrap_or(""));
+    s.push_str(taste);
     s.push_str("\n\n");
     if let Some(over) = taste_override {
         s.push_str("Additive, scenario-scoped addition to the above:\n\n");
         s.push_str(over);
         s.push_str("\n\n");
     }
+    s.push_str("Where the profile is silent, you have no standard to judge against:\n");
+    s.push_str("say nothing rather than substituting general UI convention.\n\n");
     s.push_str("Where this profile and generic UI advice conflict, the profile wins.\n\n");
+    s.push_str("A low-confidence design observation should read as a question, for\n");
+    s.push_str("example: \"is the mode label meant to overlap the frame corner?\"\n\n");
     s.push_str("Severity ceiling: major. This lens is advisory and cannot hold a run.\n");
     s
 }
 
-/// The motion lens's section: the frame count, what to judge across
-/// frames, and the (major, advisory) severity ceiling.
+/// The design lens's section when no `taste.md` is declared for this
+/// project at all. `applicable_lenses` already keeps this out of a
+/// real run (design is skipped with `Skip::NoTasteProfile` instead of
+/// dispatched), but `build_prompt` is a public function callable
+/// directly — so this path stays an explicit abstention rather than a
+/// silently blank profile, which the spec calls worse than none.
+fn no_taste_profile_section() -> String {
+    let mut s = String::new();
+    s.push_str("## What you are looking for (design)\n\n");
+    s.push_str("No taste profile is declared for this project; report nothing on this lens.\n");
+    s.push_str("Do not substitute general UI convention for an absent standard.\n");
+    s
+}
+
+/// The motion lens's section: the frame count, what only a sequence
+/// (not a single frame) can reveal, and the (major, advisory) severity
+/// ceiling.
 pub(super) fn motion_section(frame_count: usize) -> String {
     format!(
         "## What you are looking for (motion)\n\n\
          This capture has {frame_count} frames.\n\n\
-         Judge pacing, continuity between frames, and whether anything is only\n\
-         legible in a frame a viewer would not pause on.\n\n\
+         In scope: pacing, continuity between frames, flicker, and anything\n\
+         only legible mid-motion, in a frame a viewer would not pause on.\n\n\
+         Out of scope: a defect visible in a single still frame alone — that\n\
+         belongs to breakage, not here.\n\n\
          Severity ceiling: major. This lens is advisory and cannot hold a run.\n"
     )
 }
