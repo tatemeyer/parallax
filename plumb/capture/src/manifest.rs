@@ -34,8 +34,15 @@ pub struct RunManifest {
     pub scenario: String,
     /// Which adapter produced the image (`pty`/`window`/`command`).
     pub adapter: String,
-    /// The captured image, relative to the run directory.
+    /// The image a lens agent reads: the raw capture for a single-frame
+    /// PNG, or the tiled contact sheet for a multi-frame capture. A
+    /// bare filename, relative to the run directory — never a path.
     pub image: PathBuf,
+    /// The animated GIF, present only for a multi-frame capture. This
+    /// is what a human opens to watch pacing and timing; a lens agent
+    /// never reads it (see `image`). A bare filename, same as `image`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation: Option<PathBuf>,
     /// 1 for a PNG, 2+ for an animated GIF.
     pub frame_count: usize,
     /// Terminal size as `COLSxROWS`, when the adapter knows it.
@@ -131,7 +138,8 @@ mod tests {
             run_id: "20260814T101500Z".into(),
             scenario: "omnitrix-dial-rotate".into(),
             adapter: "command".into(),
-            image: std::path::PathBuf::from("omnitrix-dial-rotate.gif"),
+            image: std::path::PathBuf::from("omnitrix-dial-rotate.png"),
+            animation: Some(std::path::PathBuf::from("omnitrix-dial-rotate.gif")),
             frame_count: 5,
             size: Some("120x40".into()),
             intent: Some("The dial rotates through four alien modes.".into()),
@@ -199,6 +207,40 @@ mod tests {
         assert!(
             msg.contains(&path.display().to_string()),
             "error message should name the offending path {path:?}: {msg}"
+        );
+    }
+
+    /// A multi-frame manifest's `animation` field must survive the
+    /// round trip and stay a bare filename, same as `image` — neither
+    /// carries a run directory or absolute path.
+    #[test]
+    fn animation_field_round_trips_as_a_bare_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_manifest(&sample(), dir.path()).unwrap();
+        let back = read_manifest(&path).unwrap();
+        let animation = back.animation.expect("sample manifest declares animation");
+        assert_eq!(
+            animation,
+            std::path::PathBuf::from("omnitrix-dial-rotate.gif")
+        );
+        assert_eq!(
+            animation,
+            animation.file_name().map(std::path::PathBuf::from).unwrap()
+        );
+    }
+
+    /// A single-frame manifest carries no `animation` field at all, and
+    /// the serialized form omits it rather than emitting `null` — the
+    /// field is new surface only a multi-frame capture uses.
+    #[test]
+    fn single_frame_manifest_omits_animation_from_serialized_output() {
+        let mut m = sample();
+        m.animation = None;
+        m.frame_count = 1;
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(
+            !json.contains("animation"),
+            "single-frame manifest should not mention animation: {json}"
         );
     }
 

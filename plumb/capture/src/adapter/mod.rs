@@ -27,6 +27,19 @@ pub struct ImageFailure {
     pub source: String,
 }
 
+/// A contact sheet that could not be assembled or written, together
+/// with the path that caused it — kept as a single field so
+/// `CaptureError::ContactSheetWrite(_)` stays an opaque match, mirroring
+/// [`ImageFailure`].
+#[derive(Debug)]
+pub struct ContactSheetFailure {
+    /// The GIF that failed to decode, or the PNG path that failed to
+    /// write, whichever step failed.
+    pub path: PathBuf,
+    /// The underlying failure, rendered.
+    pub source: String,
+}
+
 /// A capture that did not produce a usable image. Capture failure is
 /// never a GO — a scenario whose capture fails is reported as HOLD
 /// with this error, so every variant must be rich enough to name what
@@ -58,6 +71,9 @@ pub enum CaptureError {
     AmbiguousOutput(Vec<PathBuf>),
     /// An image was produced but could not be opened or decoded.
     UnreadableImage(ImageFailure),
+    /// A multi-frame capture's contact sheet could not be assembled or
+    /// written.
+    ContactSheetWrite(ContactSheetFailure),
 }
 
 impl std::fmt::Display for CaptureError {
@@ -80,6 +96,14 @@ impl std::fmt::Display for CaptureError {
             }
             CaptureError::UnreadableImage(e) => {
                 write!(f, "could not decode {}: {}", e.path.display(), e.source)
+            }
+            CaptureError::ContactSheetWrite(e) => {
+                write!(
+                    f,
+                    "could not write contact sheet {}: {}",
+                    e.path.display(),
+                    e.source
+                )
             }
         }
     }

@@ -13,6 +13,7 @@ fn m(frames: usize, intent: Option<&str>, expects: Vec<Expectation>) -> RunManif
         scenario: "falcon-glitch-burst".into(),
         adapter: "command".into(),
         image: "falcon-glitch-burst.gif".into(),
+        animation: None,
         frame_count: frames,
         size: Some("120x40".into()),
         intent: intent.map(String::from),

@@ -5,6 +5,7 @@
 
 use super::{frame_count, substitute_out, CaptureError};
 use crate::config::Scenario;
+use crate::contact::write_contact_sheet;
 use crate::manifest::RunManifest;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -62,13 +63,30 @@ pub fn capture_command(
             expected_stem: stem,
         }),
         1 => {
-            let image = produced.remove(0);
-            let frames = frame_count(&image)?;
+            let captured = produced.remove(0);
+            let frames = frame_count(&captured)?;
+
+            // A single-frame capture is unaffected: the manifest's
+            // `image` names the raw capture directly, and `animation`
+            // stays absent. A 2+ frame capture keeps the GIF (what a
+            // human watches) but points `image` at a freshly-tiled
+            // contact sheet instead — the still image a lens agent can
+            // actually decode. See the design's "What a lens can
+            // actually see — the contact sheet".
+            let (image, animation) = if frames >= 2 {
+                let sheet_path = captured.with_extension("png");
+                write_contact_sheet(&captured, &sheet_path)?;
+                (sheet_path, Some(captured))
+            } else {
+                (captured, None)
+            };
+
             Ok(RunManifest {
                 run_id: run_id.to_string(),
                 scenario: scenario.name.clone(),
                 adapter: "command".into(),
                 image: image.file_name().map(Into::into).unwrap_or(image.clone()),
+                animation: animation.map(|a| a.file_name().map(Into::into).unwrap_or(a)),
                 frame_count: frames,
                 size: None,
                 intent: scenario.intent.clone(),

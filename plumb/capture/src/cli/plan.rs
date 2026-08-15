@@ -181,6 +181,7 @@ mod tests {
             scenario: scenario.into(),
             adapter: "command".into(),
             image: PathBuf::from(format!("{scenario}.png")),
+            animation: None,
             frame_count,
             size: Some("80x24".into()),
             intent: intent.map(String::from),
