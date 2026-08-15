@@ -432,12 +432,20 @@ rasterizer hard-errors on unmapped glyphs (`✦`, `💥`, em dash — see
 limitation"), which turns an entire scenario into a non-result. The
 `pty` adapter therefore gains one behavior `visual-snapshot` lacks:
 
-- `--on-unmapped-glyph {error,substitute}`. In `substitute` mode it
-  renders a visible placeholder box, records every substitution in the
-  run manifest, and the lens agents receive that manifest as a
-  **disclosed caveat**: these cells are placeholders, do not judge
-  them. A hard stop becomes a reviewable frame with a stated blind
-  spot.
+- **`on_unmapped_glyph: {error, substitute}`**, declared **per scenario**
+  in `.plumb/config.yaml`. In `substitute` mode it renders a visible
+  placeholder box, records every substitution in the run manifest, and
+  the lens agents receive that manifest as a **disclosed caveat**: these
+  cells are placeholders, do not judge them. A hard stop becomes a
+  reviewable frame with a stated blind spot.
+
+  **Corrected 2026-08-15.** This originally read
+  `--on-unmapped-glyph {error,substitute}`, i.e. a CLI flag. It is a
+  per-scenario config field and there is no flag. Only some scenarios
+  hit unmapped glyphs, and the orchestrated path needs the choice
+  **durable rather than re-typed** on every invocation — a flag would
+  have to be remembered and re-supplied by whoever runs the review,
+  which is exactly the kind of thing that silently stops happening.
 
 `error` remains the default, preserving `visual-snapshot`'s existing
 behavior for anyone who wants it.
@@ -499,7 +507,7 @@ New repository. First-cut inventory:
 - `capture/src/pty.rs`, `capture/src/encode.rs`, `capture/src/script.rs`
   — generalized from `tools/visual-snapshot`.
 - `capture/src/window.rs` — new; Windows window capture.
-- `capture/src/glyphs.rs` — the `--on-unmapped-glyph` substitute path.
+- `capture/src/glyph.rs` — the `on_unmapped_glyph` substitute path.
 - `skills/visual-review/SKILL.md` — orchestration: select, capture, fan
   out, merge, verdict.
 - `agents/critic-{breakage,intent,design,motion}.md` — the four lenses.
