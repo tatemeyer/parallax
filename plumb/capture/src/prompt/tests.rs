@@ -364,6 +364,39 @@ fn design_carries_the_low_confidence_exemplar_from_the_spec() {
     assert!(p.contains("is the mode label meant to overlap the frame corner?"));
 }
 
+// --- added on review: Task 14a follow-up, contact-sheet wording -----
+
+#[test]
+fn multi_frame_frames_line_describes_a_contact_sheet_not_an_animation() {
+    let manifest = m(5, Some("i"), vec![]);
+    let p = build_prompt(&LensInputs {
+        lens: Lens::Breakage,
+        manifest: &manifest,
+        taste: None,
+        taste_override: None,
+    });
+    assert!(
+        p.contains("Frames: 5 (contact sheet in reading order, separated by gutters)"),
+        "multi-frame Frames line must describe a contact sheet, not an animation: {p}"
+    );
+    assert!(
+        !p.to_lowercase().contains("animated sequence"),
+        "the agent receives a contact sheet, never an animation, and must not be told otherwise"
+    );
+}
+
+#[test]
+fn single_frame_frames_line_is_unchanged() {
+    let manifest = m(1, Some("i"), vec![]);
+    let p = build_prompt(&LensInputs {
+        lens: Lens::Breakage,
+        manifest: &manifest,
+        taste: None,
+        taste_override: None,
+    });
+    assert!(p.contains("Frames: 1 (single still)"));
+}
+
 #[test]
 fn motion_scopes_itself_to_what_only_a_sequence_reveals() {
     let manifest = m(5, Some("i"), vec![]);

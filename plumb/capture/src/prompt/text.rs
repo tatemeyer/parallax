@@ -37,7 +37,7 @@ pub(super) fn skeleton(manifest: &RunManifest, lens_section: &str) -> String {
         if manifest.frame_count <= 1 {
             "single still"
         } else {
-            "animated sequence"
+            "contact sheet in reading order, separated by gutters"
         }
     ));
     if let Some(size) = &manifest.size {
