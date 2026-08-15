@@ -124,6 +124,57 @@ or cares which adapter produced a frame.
 Adding a surface later means one new adapter behind the same contract
 and no change anywhere else in the system.
 
+### What a lens can actually see — the contact sheet
+
+**Amended 2026-08-15, from evidence produced by the first real run.**
+
+The original contract said: one frame → PNG, many frames → GIF, and the
+lens agent reads whatever landed. The first end-to-end run against
+TTUI's `omnitrix` example falsified the second half of that. All four
+lenses independently reported the capture as unreadable, and a
+diagnostic settled why: the GIF is **structurally sound** — 8 frames,
+1920×640, frame 4 carrying 2.32% non-black content — but it reaches an
+agent as a decode-failure placeholder, while a PNG extracted from that
+same GIF renders in full detail.
+
+The consequence was not a bug but a hole in the design: because a
+script with one or more steps *requires* a `.gif`, **every multi-frame
+scenario was unreviewable, and the `motion` lens — which applies only
+to multi-frame captures — could never fire at all.**
+
+Worth recording how this survived: the test suite asserts on prompt
+construction, selection, merging, and verdict logic, and every one of
+those assertions passed. None of them asks whether an agent can *see*
+the artifact it is judging. That question has no unit test, only a real
+run.
+
+**The resolution: a multi-frame capture emits two artifacts.**
+
+- **The `.gif` stays, unchanged**, and remains what a human watches.
+  Pacing, easing and timing are what the animated form is for, and
+  TTUI's existing visual-review convention is built on looking at it.
+- **A tiled contact-sheet `.png`** is written beside it — every frame
+  laid out in reading order in a single still image — and *that* is
+  what reaches the lens agents.
+
+The manifest names both: `image` points at the contact sheet (what the
+lens reads), and a new `animation` field points at the GIF (what a
+human opens). Both are recorded as **bare filenames**, preserving the
+blinding property that no run directory or absolute path appears in
+anything a lens receives.
+
+This keeps the fix inside the capture layer, where frame-count logic
+already lives, rather than pushing image processing into the
+orchestrating skill — which would move deterministic work out of Rust
+and out of reach of a unit test, breaking the same boundary that makes
+the blinding property checkable in the first place.
+
+Two consequences follow for the lenses, and neither weakens the design:
+the `motion` lens judges a contact sheet rather than an animation, so
+it reasons about frame-to-frame change laid out spatially; and its
+applicability rule is unchanged, since frame count still comes from the
+manifest.
+
 ### Per-project state
 
 ```

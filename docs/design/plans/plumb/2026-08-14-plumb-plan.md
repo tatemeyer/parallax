@@ -3339,6 +3339,70 @@ pipeline, with the library itself built out separately."
 
 ---
 
+### Slice 2.8: The contact sheet — making a multi-frame capture legible
+
+**Added 2026-08-15, after Task 14's real run.** Inserted before Arc 3
+because `critic-motion` applies only to multi-frame captures, so
+building it first would ship a lens that cannot fire.
+
+#### Task 14a: Emit a tiled contact sheet beside the GIF
+
+**Tags:** coding
+
+**Files:**
+- Modify: `plumb/capture/src/adapter/mod.rs` (or a new
+  `plumb/capture/src/contact.rs` if the tiling logic warrants its own
+  module against the 500-line ceiling)
+- Modify: `plumb/capture/src/manifest.rs` (add the `animation` field)
+
+**Interfaces:**
+- Consumes: the `command` adapter's existing frame-count detection and
+  `image`, already declared.
+- Produces: the artifact lens agents actually read.
+
+**Why this exists.** Task 14's run proved a multi-frame `.gif` reaches
+a lens agent as a decode-failure placeholder, while a PNG from the same
+GIF renders in full detail. Every multi-frame scenario was therefore
+unreviewable and `motion` could never fire. See the spec's "What a lens
+can actually see — the contact sheet".
+
+**Requirements:**
+
+- A capture yielding 2+ frames writes **both** the `.gif` (unchanged)
+  and a tiled contact-sheet `.png` — every frame in reading order in
+  one still image.
+- A single-frame capture is unaffected: one PNG, no contact sheet, no
+  `animation` field.
+- `RunManifest.image` names the **contact sheet** for multi-frame
+  captures; a new `animation` field names the GIF. **Both are bare
+  filenames** — the blinding property from Task 4 must hold, and its
+  existing test asserting no path or command line appears in serialized
+  output must still pass unmodified.
+- Frame order must be deterministic and match capture order.
+- Tiling must not silently drop frames: a sheet for an 8-frame capture
+  contains 8 panes.
+- The lens sees the sheet, so panes should be distinguishable — leave
+  a visible gutter between frames rather than butting them edge to edge.
+
+**TDD is mandatory.** Assert on real pixel data, not on file existence:
+build a synthetic multi-frame GIF in the test, run the tiling, and
+verify the sheet's dimensions and that each pane's content lands where
+the frame order says it should. A test that only checks the file was
+written would not have caught the defect this task exists to fix.
+
+**Verification:** re-run the existing `omnitrix-dial-rotate` scenario
+end-to-end and confirm a lens agent can read the emitted sheet and
+describe real UI content — the exact check that failed before.
+
+**A second, separate finding from the same run, NOT in this task's
+scope:** frame 0 of a multi-frame capture is 100% black (0 non-black
+pixels) because `tools/visual-snapshot` takes its initial frame before
+the app has drawn. That is pre-existing TTUI behaviour in a tool Plumb
+wraps unmodified, and belongs in TTUI's issue tracker under
+`.claude/rules/code-forge.md` triage, not here.
+
+---
+
 ## Arc 3: The advisory lenses
 
 Both are capped at `major` and can never hold a run. The applicability
