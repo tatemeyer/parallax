@@ -12,5 +12,6 @@ pub mod finding;
 pub mod manifest;
 pub mod merge;
 pub mod prompt;
+pub mod rulings;
 pub mod select;
 pub mod verdict;

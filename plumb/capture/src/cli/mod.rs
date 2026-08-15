@@ -9,6 +9,7 @@ mod capture;
 mod init;
 mod merge;
 mod plan;
+mod rule;
 mod select;
 
 use crate::Command;
@@ -132,7 +133,16 @@ pub(crate) fn dispatch(command: Command) -> i32 {
             report,
             expected,
             capture_failure,
-        } => match merge::run_merge(&run_dir, &report, &expected, &capture_failure) {
+            rulings,
+            taste,
+        } => match merge::run_merge(
+            &run_dir,
+            &report,
+            &expected,
+            &capture_failure,
+            rulings.as_deref(),
+            taste.as_deref(),
+        ) {
             Ok((verdict, path)) => {
                 println!("{}", path.display());
                 verdict.exit_code()
@@ -151,6 +161,45 @@ pub(crate) fn dispatch(command: Command) -> i32 {
             Err(e @ merge::MergeCliError::Io(_)) => {
                 eprintln!("HOLD: merge could not run: {e}");
                 2
+            }
+            // `--rulings` named a file that exists but is not valid
+            // ruling history: merge never got to finish, same class of
+            // failure as an unreadable report.
+            Err(e @ merge::MergeCliError::Ruling(_)) => {
+                eprintln!("HOLD: merge could not run: {e}");
+                2
+            }
+        },
+        Command::Rule {
+            run_dir,
+            fingerprint,
+            reason,
+            scope,
+            taste,
+            rulings,
+        } => match rule::run_rule(
+            &run_dir,
+            &fingerprint,
+            &reason,
+            &scope,
+            taste.as_deref(),
+            &rulings,
+        ) {
+            Ok(r) => {
+                println!(
+                    "ruling recorded: {} ({} scope) — {}",
+                    r.fingerprint,
+                    match r.scope {
+                        parallax_plumb::rulings::Scope::Scenario => "scenario",
+                        parallax_plumb::rulings::Scope::ProjectWide => "project-wide",
+                    },
+                    rulings.display()
+                );
+                0
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
             }
         },
     }

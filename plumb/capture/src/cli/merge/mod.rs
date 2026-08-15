@@ -6,10 +6,14 @@
 //! `Held` with the parse failure as its reason, since an unparseable
 //! agent response must never silently read as a clean pass.
 
+#[cfg(test)]
+mod tests;
+
 use super::IoFailure;
 use parallax_plumb::finding::{self, Lens};
 use parallax_plumb::manifest;
 use parallax_plumb::merge;
+use parallax_plumb::rulings::{self, RulingError};
 use parallax_plumb::verdict::{self, LensOutcome, LensReport, Verdict, VerdictInput};
 use std::path::{Path, PathBuf};
 
@@ -27,8 +31,12 @@ pub(super) enum MergeCliError {
     /// A `--report` argument was not `lens:scenario:file`, or named an
     /// unknown lens.
     Usage(String),
-    /// Reading a report file, or writing `verdict.md`, failed.
+    /// Reading a report file, `--taste`, or writing `verdict.md`, failed.
     Io(IoFailure),
+    /// `--rulings` named a file that exists but could not be read as
+    /// ruling history (Arc 4). A missing `--rulings` file is not this
+    /// — see `rulings::load_rulings` — only a malformed one is.
+    Ruling(RulingError),
 }
 
 impl std::fmt::Display for MergeCliError {
@@ -36,6 +44,7 @@ impl std::fmt::Display for MergeCliError {
         match self {
             MergeCliError::Usage(m) => write!(f, "{m}"),
             MergeCliError::Io(e) => write!(f, "{e}"),
+            MergeCliError::Ruling(e) => write!(f, "{e}"),
         }
     }
 }
@@ -107,13 +116,20 @@ fn parse_capture_failure_arg(raw: &str) -> Result<(String, String), MergeCliErro
 }
 
 /// Reads every `--report`'s raw text, parses it, merges duplicate
-/// findings, writes `verdict.md` into `run_dir`, and returns the run's
-/// overall verdict alongside the path written.
+/// findings, runs the result through `rulings::suppress` (Arc 4) —
+/// against `rulings_path`'s history, if given, hashed against
+/// `taste_path`'s current content — writes `verdict.md` into
+/// `run_dir`, and returns the run's overall verdict alongside the path
+/// written. Neither `rulings_path` nor `taste_path` ever reaches
+/// `finding::parse_findings` or anything upstream of this point: every
+/// lens has already reported by the time a ruling is even loaded.
 pub(super) fn run_merge(
     run_dir: &Path,
     reports: &[String],
     expected: &[String],
     capture_failures: &[String],
+    rulings_path: Option<&Path>,
+    taste_path: Option<&Path>,
 ) -> Result<(Verdict, PathBuf), MergeCliError> {
     let mut lens_reports = Vec::new();
     let mut all_findings = Vec::new();
@@ -181,12 +197,33 @@ pub(super) fn run_merge(
         .map(String::from)
         .unwrap_or_else(manifest::new_run_id);
 
+    let history = match rulings_path {
+        Some(p) => rulings::load_rulings(p).map_err(MergeCliError::Ruling)?,
+        None => Vec::new(),
+    };
+    let taste_text = taste_path
+        .map(|p| {
+            std::fs::read_to_string(p).map_err(|source| {
+                MergeCliError::Io(IoFailure {
+                    path: p.to_path_buf(),
+                    source,
+                })
+            })
+        })
+        .transpose()?;
+    let current_taste_hash = rulings::taste_hash(taste_text.as_deref());
+    let rulings::Suppression {
+        kept,
+        suppressed,
+        stale,
+    } = rulings::suppress(merge::merge(all_findings), &history, &current_taste_hash);
+
     let input = VerdictInput {
         run_id,
         reports: lens_reports,
-        findings: merge::merge(all_findings),
-        suppressed: Vec::new(),
-        stale_rulings: Vec::new(),
+        findings: kept,
+        suppressed,
+        stale_rulings: stale,
         dropped_no_region,
         deferred: Vec::new(),
         capture_failures: capture_failure_pairs,
@@ -201,166 +238,4 @@ pub(super) fn run_merge(
     })?;
 
     Ok((verdict, path))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn write_report(dir: &Path, name: &str, json: &str) -> PathBuf {
-        let path = dir.join(name);
-        std::fs::write(&path, json).unwrap();
-        path
-    }
-
-    const ONE_BLOCKER: &str = r#"[{"lens":"breakage","scenario":"dial","severity":"blocker",
-      "region":"upper-right","claim":"the border does not close",
-      "evidence":"e","confidence":"high"}]"#;
-
-    #[test]
-    fn merge_rejects_a_malformed_report_spec() {
-        let err = parse_report_arg("breakage-dial-file.json").unwrap_err();
-        assert!(matches!(err, MergeCliError::Usage(_)));
-    }
-
-    #[test]
-    fn merge_rejects_an_unknown_lens_name() {
-        let err = parse_report_arg("nonsense:dial:file.json").unwrap_err();
-        assert!(matches!(err, MergeCliError::Usage(_)));
-    }
-
-    #[test]
-    fn a_clean_report_produces_a_go_and_writes_verdict_md() {
-        let tmp = tempfile::tempdir().unwrap();
-        let report = write_report(tmp.path(), "breakage.json", "[]");
-        let spec = format!("breakage:dial:{}", report.display());
-
-        let (verdict, path) = run_merge(tmp.path(), &[spec], &[], &[]).unwrap();
-
-        assert_eq!(verdict, Verdict::Go);
-        assert!(path.is_file());
-    }
-
-    #[test]
-    fn a_blocker_report_produces_a_no_go() {
-        let tmp = tempfile::tempdir().unwrap();
-        let report = write_report(tmp.path(), "breakage.json", ONE_BLOCKER);
-        let spec = format!("breakage:dial:{}", report.display());
-
-        let (verdict, _) = run_merge(tmp.path(), &[spec], &[], &[]).unwrap();
-
-        assert_eq!(verdict, Verdict::NoGo);
-    }
-
-    #[test]
-    fn unparseable_report_text_holds_rather_than_erroring_the_whole_merge() {
-        let tmp = tempfile::tempdir().unwrap();
-        let report = write_report(tmp.path(), "intent.json", "not json at all");
-        let spec = format!("intent:dial:{}", report.display());
-
-        let (verdict, _) = run_merge(tmp.path(), &[spec], &[], &[]).unwrap();
-
-        assert_eq!(
-            verdict,
-            Verdict::Hold,
-            "an unparseable lens report must hold, never silently pass as GO"
-        );
-    }
-
-    #[test]
-    fn a_missing_report_file_is_an_io_error() {
-        let tmp = tempfile::tempdir().unwrap();
-        let spec = format!(
-            "breakage:dial:{}",
-            tmp.path().join("missing.json").display()
-        );
-
-        let err = run_merge(tmp.path(), &[spec], &[], &[]).unwrap_err();
-
-        assert!(matches!(err, MergeCliError::Io(_)));
-    }
-
-    // --- review Finding 1: a capture failure must actually be able to
-    // reach verdict.md from the CLI, not just from a hand-built
-    // VerdictInput in a unit test. ----------------------------------
-
-    #[test]
-    fn a_capture_failure_flag_holds_the_run_with_no_report_at_all() {
-        let tmp = tempfile::tempdir().unwrap();
-        let cf = "tardis-idle:unmapped glyph U+2726".to_string();
-
-        let (verdict, path) = run_merge(tmp.path(), &[], &[], &[cf]).unwrap();
-
-        assert_eq!(
-            verdict,
-            Verdict::Hold,
-            "a capture failure supplied via the CLI must reach the verdict, not just a hand-built VerdictInput"
-        );
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("tardis-idle"));
-        assert!(text.contains("U+2726"));
-    }
-
-    #[test]
-    fn a_capture_failure_flag_does_not_soften_an_existing_no_go() {
-        let tmp = tempfile::tempdir().unwrap();
-        let report = write_report(tmp.path(), "breakage.json", ONE_BLOCKER);
-        let spec = format!("breakage:dial:{}", report.display());
-        let cf = "other-scenario:boom".to_string();
-
-        let (verdict, _) = run_merge(tmp.path(), &[spec], &[], &[cf]).unwrap();
-
-        assert_eq!(verdict, Verdict::NoGo);
-    }
-
-    #[test]
-    fn merge_rejects_a_malformed_capture_failure_arg() {
-        let tmp = tempfile::tempdir().unwrap();
-        let err = run_merge(tmp.path(), &[], &[], &["no-colon-here".into()]).unwrap_err();
-        assert!(matches!(err, MergeCliError::Usage(_)));
-    }
-
-    // --- review Finding 2: a lens that was dispatched but never
-    // returned a report must hold, not silently vanish from the poll.
-
-    #[test]
-    fn an_expected_lens_with_no_report_holds_the_run() {
-        let tmp = tempfile::tempdir().unwrap();
-        let report = write_report(tmp.path(), "breakage.json", "[]");
-        let spec = format!("breakage:dial:{}", report.display());
-
-        let (verdict, path) =
-            run_merge(tmp.path(), &[spec], &["motion:dial".to_string()], &[]).unwrap();
-
-        assert_eq!(
-            verdict,
-            Verdict::Hold,
-            "a lens that was expected to report but did not must hold, not vanish"
-        );
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("motion"));
-    }
-
-    #[test]
-    fn an_expected_lens_that_did_report_is_not_double_counted() {
-        let tmp = tempfile::tempdir().unwrap();
-        let report = write_report(tmp.path(), "breakage.json", "[]");
-        let spec = format!("breakage:dial:{}", report.display());
-
-        let (verdict, _) =
-            run_merge(tmp.path(), &[spec], &["breakage:dial".to_string()], &[]).unwrap();
-
-        assert_eq!(
-            verdict,
-            Verdict::Go,
-            "a lens that both was expected and did report must not read as missing"
-        );
-    }
-
-    #[test]
-    fn merge_rejects_a_malformed_expected_arg() {
-        let tmp = tempfile::tempdir().unwrap();
-        let err = run_merge(tmp.path(), &[], &["no-colon-here".into()], &[]).unwrap_err();
-        assert!(matches!(err, MergeCliError::Usage(_)));
-    }
 }

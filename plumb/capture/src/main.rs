@@ -22,8 +22,7 @@ struct Args {
     command: Command,
 }
 
-/// The implemented subcommands. `rule` arrives with a later task
-/// (Arc 4).
+/// The implemented subcommands.
 #[derive(Subcommand)]
 enum Command {
     /// Scaffold a `.plumb/` directory from the bundled templates.
@@ -85,6 +84,41 @@ enum Command {
         /// outright. A capture failure is never a GO.
         #[arg(long)]
         capture_failure: Vec<String>,
+        /// Path to `rulings.jsonl` (Arc 4); a prior ruling suppresses a
+        /// matching finding here, never during capture or dispatch.
+        #[arg(long)]
+        rulings: Option<PathBuf>,
+        /// Path to `taste.md`, hashed to decide whether a loaded ruling
+        /// is stale. Reaches only the hash, never the design lens's
+        /// prompt (that path is `plan`'s own `--taste`).
+        #[arg(long)]
+        taste: Option<PathBuf>,
+    },
+    /// Record an operator's overrule of one finding, by fingerprint, as
+    /// a suppression ruling. Never read by a lens agent — only by a
+    /// later `merge`'s `rulings::suppress`.
+    Rule {
+        /// Directory holding the run's already-written `verdict.md`,
+        /// where the finding is looked up by `--fingerprint`.
+        #[arg(long)]
+        run_dir: PathBuf,
+        /// The overruled finding's fingerprint, as computed by
+        /// `merge::fingerprint` (scenario + region + claim; excludes
+        /// the lens).
+        #[arg(long)]
+        fingerprint: String,
+        /// Why the operator is overruling this finding.
+        #[arg(long)]
+        reason: String,
+        /// `scenario` (default) or `project-wide`.
+        #[arg(long, default_value = "scenario")]
+        scope: String,
+        /// Path to `taste.md`, hashed into the ruling record.
+        #[arg(long)]
+        taste: Option<PathBuf>,
+        /// Where to append the ruling.
+        #[arg(long, default_value = ".plumb/rulings.jsonl")]
+        rulings: PathBuf,
     },
 }
 
@@ -197,6 +231,88 @@ mod tests {
                 assert_eq!(scenario, "dial");
             }
             _ => panic!("expected Capture"),
+        }
+    }
+
+    #[test]
+    fn merge_parses_rulings_and_taste_as_optional() {
+        let a = Args::try_parse_from([
+            "plumb",
+            "merge",
+            "--run-dir",
+            "r",
+            "--rulings",
+            ".plumb/rulings.jsonl",
+            "--taste",
+            ".plumb/taste.md",
+        ])
+        .unwrap();
+        match a.command {
+            Command::Merge { rulings, taste, .. } => {
+                assert_eq!(rulings, Some(PathBuf::from(".plumb/rulings.jsonl")));
+                assert_eq!(taste, Some(PathBuf::from(".plumb/taste.md")));
+            }
+            _ => panic!("expected Merge"),
+        }
+    }
+
+    #[test]
+    fn merge_omits_rulings_and_taste_by_default() {
+        let a = Args::try_parse_from(["plumb", "merge", "--run-dir", "r"]).unwrap();
+        match a.command {
+            Command::Merge { rulings, taste, .. } => {
+                assert!(rulings.is_none());
+                assert!(taste.is_none());
+            }
+            _ => panic!("expected Merge"),
+        }
+    }
+
+    #[test]
+    fn rule_requires_run_dir_fingerprint_and_reason() {
+        assert!(Args::try_parse_from(["plumb", "rule", "--run-dir", "r"]).is_err());
+    }
+
+    #[test]
+    fn rule_defaults_scope_to_scenario_and_rulings_to_the_project_default() {
+        let a = Args::try_parse_from([
+            "plumb",
+            "rule",
+            "--run-dir",
+            "r",
+            "--fingerprint",
+            "abc123",
+            "--reason",
+            "intentional",
+        ])
+        .unwrap();
+        match a.command {
+            Command::Rule { scope, rulings, .. } => {
+                assert_eq!(scope, "scenario");
+                assert_eq!(rulings, PathBuf::from(".plumb/rulings.jsonl"));
+            }
+            _ => panic!("expected Rule"),
+        }
+    }
+
+    #[test]
+    fn rule_parses_an_explicit_project_wide_scope() {
+        let a = Args::try_parse_from([
+            "plumb",
+            "rule",
+            "--run-dir",
+            "r",
+            "--fingerprint",
+            "abc123",
+            "--reason",
+            "intentional",
+            "--scope",
+            "project-wide",
+        ])
+        .unwrap();
+        match a.command {
+            Command::Rule { scope, .. } => assert_eq!(scope, "project-wide"),
+            _ => panic!("expected Rule"),
         }
     }
 }
