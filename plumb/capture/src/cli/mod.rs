@@ -127,7 +127,12 @@ pub(crate) fn dispatch(command: Command) -> i32 {
                 1
             }
         },
-        Command::Merge { run_dir, report } => match merge::run_merge(&run_dir, &report) {
+        Command::Merge {
+            run_dir,
+            report,
+            expected,
+            capture_failure,
+        } => match merge::run_merge(&run_dir, &report, &expected, &capture_failure) {
             Ok((verdict, path)) => {
                 println!("{}", path.display());
                 verdict.exit_code()

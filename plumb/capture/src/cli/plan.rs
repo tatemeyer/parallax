@@ -250,4 +250,33 @@ mod tests {
         assert!(json.contains("\"breakage\""));
         assert!(serde_json::from_str::<serde_json::Value>(&json).is_ok());
     }
+
+    /// Review Finding 4: the earlier test only ever exercised
+    /// `"breakage"`, so a swapped `design`/`motion` lens name or a
+    /// swapped skip-reason string in the local `lens_name`/`skip_reason`
+    /// mirrors in this file would have passed every prior test. A
+    /// single-frame, no-intent, no-taste manifest skips all three
+    /// non-breakage lenses for three different reasons, which pins all
+    /// six strings at once.
+    #[test]
+    fn render_plan_json_names_every_non_breakage_lens_and_its_own_skip_reason() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_manifest(&sample_manifest("crabs", None, 1), tmp.path()).unwrap();
+
+        let plan = run_plan(tmp.path(), None, 8).unwrap();
+        let json = render_plan(plan);
+
+        assert!(json.contains("\"lens\": \"intent\""), "{json}");
+        assert!(json.contains("\"lens\": \"design\""), "{json}");
+        assert!(json.contains("\"lens\": \"motion\""), "{json}");
+        assert!(
+            json.contains("\"reason\": \"no intent declared\""),
+            "{json}"
+        );
+        assert!(json.contains("\"reason\": \"no taste.md\""), "{json}");
+        assert!(
+            json.contains("\"reason\": \"single-frame capture\""),
+            "{json}"
+        );
+    }
 }

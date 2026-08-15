@@ -67,7 +67,15 @@ pub enum LensOutcome {
 /// Aggregates the poll. Every lens reports on its own domain only, no
 /// lens can clear another's, and the run carries the most severe report
 /// received. A `Hold` is never upgraded to a `Go`.
-pub fn aggregate(reports: &[LensReport], findings: &[MergedFinding]) -> Verdict {
+///
+/// Deliberately `pub(crate)`, not `pub`: this function cannot see
+/// `VerdictInput::capture_failures`, so a caller outside this module
+/// that used it directly instead of [`verdict_for`] would silently
+/// regain the "capture failure reads as GO" bug. Keeping it crate-
+/// private makes `verdict_for` the only route out of the module, so
+/// the capture-failure rule is enforced by the compiler, not by a
+/// convention every call site has to remember.
+pub(crate) fn aggregate(reports: &[LensReport], findings: &[MergedFinding]) -> Verdict {
     let blocked = findings
         .iter()
         .any(|m| m.finding.severity == Severity::Blocker && m.finding.lens.is_blocker_capable());

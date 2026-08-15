@@ -76,6 +76,15 @@ enum Command {
         /// One `lens:scenario:file` triple per lens report to ingest.
         #[arg(long)]
         report: Vec<String>,
+        /// One `lens:scenario` pair per lens dispatched for this run;
+        /// an expected lens with no matching `--report` holds the run
+        /// rather than silently vanishing from the poll.
+        #[arg(long)]
+        expected: Vec<String>,
+        /// One `scenario:reason` pair per scenario whose capture failed
+        /// outright. A capture failure is never a GO.
+        #[arg(long)]
+        capture_failure: Vec<String>,
     },
 }
 

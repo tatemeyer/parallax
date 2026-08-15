@@ -243,3 +243,46 @@ fn write_verdict_writes_verdict_md_into_the_run_dir() {
     let text = std::fs::read_to_string(&path).unwrap();
     assert_eq!(text, render_verdict(&i));
 }
+
+// --- precedence cells named in review Finding 3: both already yield
+// the right answer today, but neither was pinned by a test. Pinning
+// tests only, no production code accompanies these. ------------------
+
+#[test]
+fn a_held_lens_and_a_capture_failure_together_still_hold_with_no_blocker() {
+    // Two independent HOLD signals at once must not somehow cancel out
+    // or compound into something other than HOLD.
+    let mut i = input();
+    i.findings = Vec::new();
+    i.reports.push(LensReport {
+        scenario: "dial".into(),
+        lens: Lens::Motion,
+        outcome: LensOutcome::Held("x".into()),
+    });
+    i.capture_failures = vec![("other-scenario".into(), "boom".into())];
+    assert_eq!(verdict_for(&i), Verdict::Hold);
+}
+
+#[test]
+fn a_blocker_severity_from_an_advisory_lens_does_not_block_aggregate() {
+    // Defense-in-depth: finding::parse_findings (Task 7) already clamps
+    // design/motion to Major, so this construction can never happen via
+    // the real ingestion path. This test bypasses that path entirely —
+    // building the Finding by hand, not through parse_findings — to pin
+    // that aggregate's own `is_blocker_capable()` guard is what actually
+    // stops it, not just the clamp upstream. Does not touch finding.rs.
+    let bypassed_clamp = merge(vec![Finding {
+        lens: Lens::Design,
+        scenario: "dial".into(),
+        severity: Severity::Blocker,
+        region: "upper right".into(),
+        claim: "the border does not close".into(),
+        evidence: "e".into(),
+        confidence: Confidence::High,
+    }]);
+    assert_eq!(
+        aggregate(&[reported(Lens::Design)], &bypassed_clamp),
+        Verdict::Go,
+        "a Blocker severity from a non-blocker-capable lens must never trip NO-GO"
+    );
+}
