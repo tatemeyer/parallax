@@ -44,11 +44,30 @@ fn fixture_binary(name: &str) -> PathBuf {
 /// script to a temp path so the test owns both ends. Mirrors the task
 /// brief's helper exactly, aside from sourcing `exe` from
 /// `fixture_binary` instead of `env!("CARGO_BIN_EXE_...")` (see this
-/// file's header).
+/// file's header) and generating a per-call-unique script path via
+/// `tempfile::Builder` instead of a `process::id()`-keyed name.
+///
+/// Found on review: `process::id()` is constant for the whole test
+/// *binary*, not per call, so under cargo's default parallel test
+/// execution every `pty_scenario` call in this file raced on the same
+/// fixed path — one test's write or delete landing mid another test's
+/// read. Reproduced directly (3 of 5 consecutive `cargo test
+/// --workspace` runs failed, with wrong `frame_count`, a missing
+/// `animation`, and a JSON EOF parse error — all consistent with the
+/// race). `tempfile::Builder::tempfile()` generates a securely random,
+/// per-call-unique filename, so concurrent calls can never collide;
+/// `.into_temp_path().keep()` persists it past this function's return
+/// (a plain `NamedTempFile` would delete it on drop, before `capture()`
+/// ever reads it).
 fn pty_scenario(exe: &str, size: &str, steps: &[Step]) -> Scenario {
-    let script =
-        std::env::temp_dir().join(format!("plumb-fixture-script-{}.json", std::process::id()));
-    std::fs::write(&script, steps_to_json(steps)).unwrap();
+    use std::io::Write;
+    let mut file = tempfile::Builder::new()
+        .prefix("plumb-fixture-script-")
+        .suffix(".json")
+        .tempfile()
+        .unwrap();
+    file.write_all(steps_to_json(steps).as_bytes()).unwrap();
+    let script = file.into_temp_path().keep().unwrap();
     Scenario {
         name: "fixture".into(),
         adapter: AdapterKind::Pty,
