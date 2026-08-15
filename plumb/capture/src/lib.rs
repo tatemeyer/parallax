@@ -6,12 +6,18 @@
 #![warn(missing_docs)]
 
 pub mod adapter;
+pub mod color;
 pub mod config;
 pub mod contact;
+pub mod encode;
 pub mod finding;
+pub mod glyph;
+pub mod keys;
 pub mod manifest;
 pub mod merge;
 pub mod prompt;
+pub mod render;
 pub mod rulings;
+pub mod script;
 pub mod select;
 pub mod verdict;
