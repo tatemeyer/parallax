@@ -9,5 +9,6 @@ pub mod adapter;
 pub mod config;
 pub mod finding;
 pub mod manifest;
+pub mod merge;
 pub mod prompt;
 pub mod select;
