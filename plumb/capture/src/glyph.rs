@@ -11,6 +11,28 @@ pub enum GlyphError {
     Unmapped(char),
 }
 
+/// How the `pty` adapter's capture loop reacts to an unmapped codepoint:
+/// hard-error naming it (the only behavior Task 19 wires up), or
+/// substitute a placeholder glyph and record the substitution (Task 20).
+///
+/// Deviation from the brief's literal `impl Default for GlyphMode { fn
+/// default() -> Self { GlyphMode::Error } }`: `cargo clippy --all-targets
+/// -- -D warnings` (a mandatory gate) rejects that as
+/// `clippy::derivable_impls`, since the same default can be expressed
+/// via `#[derive(Default)]` plus a `#[default]` variant attribute.
+/// Forced by the gate; behavior (`GlyphMode::default() ==
+/// GlyphMode::Error`) is identical either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GlyphMode {
+    /// Propagate `GlyphError::Unmapped` and abort the capture.
+    #[default]
+    Error,
+    /// Draw a placeholder glyph in place of an unmapped codepoint and
+    /// record the substitution instead of failing. Not yet implemented
+    /// by `run_script` — landing in Task 20.
+    Substitute,
+}
+
 /// Looks up `ch`'s 8x8 bitmap across every font8x8 table TTUI's actual
 /// glyph set draws from, plus algorithmically-generated Braille Patterns
 /// glyphs (`braille_glyph_for`) — `font8x8` doesn't cover that block at
@@ -153,6 +175,11 @@ mod tests {
         // naive top-to-bottom bit order.
         let bitmap = glyph_for('\u{2808}').unwrap();
         assert_eq!(bitmap, [0xF0, 0xF0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn glyph_mode_defaults_to_error() {
+        assert_eq!(GlyphMode::default(), GlyphMode::Error);
     }
 
     #[test]
