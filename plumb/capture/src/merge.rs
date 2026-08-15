@@ -58,7 +58,8 @@ pub struct MergedFinding {
 /// Groups findings by fingerprint, collapsing duplicates raised by more
 /// than one lens into a single [`MergedFinding`] that keeps the most
 /// severe report. Output is sorted most severe first (ties broken by
-/// scenario, then region) for a stable, deterministic order.
+/// scenario, then region, then claim) for a stable, deterministic order
+/// that never depends on input/subagent completion order.
 pub fn merge(findings: Vec<Finding>) -> Vec<MergedFinding> {
     let mut order: Vec<String> = Vec::new();
     let mut groups: std::collections::HashMap<String, Vec<Finding>> =
@@ -113,6 +114,7 @@ pub fn merge(findings: Vec<Finding>) -> Vec<MergedFinding> {
             .cmp(&a.finding.severity)
             .then_with(|| a.finding.scenario.cmp(&b.finding.scenario))
             .then_with(|| a.finding.region.cmp(&b.finding.region))
+            .then_with(|| a.finding.claim.cmp(&b.finding.claim))
     });
 
     merged
@@ -219,5 +221,37 @@ mod tests {
     #[test]
     fn merging_an_empty_list_yields_an_empty_list() {
         assert!(merge(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn ties_on_severity_scenario_and_region_break_by_claim() {
+        // Fed in descending claim order; a sort key that stops at region
+        // would leave a stable sort's pre-sort (input) order untouched.
+        let merged = merge(vec![
+            f(Lens::Breakage, Severity::Major, "r", "the second claim"),
+            f(Lens::Breakage, Severity::Major, "r", "the first claim"),
+        ]);
+        let claims: Vec<_> = merged.iter().map(|m| m.finding.claim.clone()).collect();
+        assert_eq!(claims, vec!["the first claim", "the second claim"]);
+    }
+
+    #[test]
+    fn ties_on_severity_and_blocker_class_break_by_lens_agent_name() {
+        // Intent is listed first here. Iterator::max_by returns the last
+        // of equally-maximum elements, so if arbitration relied on that
+        // instead of comparing agent_name explicitly, this input order
+        // would incorrectly pick Breakage (last in the vec) as the
+        // representative instead of Intent ("critic-intent" > "critic-breakage").
+        let merged = merge(vec![
+            f(Lens::Intent, Severity::Blocker, "r", "c"),
+            f(Lens::Breakage, Severity::Blocker, "r", "c"),
+        ]);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0].finding.lens,
+            Lens::Intent,
+            "critic-intent sorts after critic-breakage"
+        );
+        assert_eq!(merged[0].also_raised_by, vec![Lens::Breakage]);
     }
 }
