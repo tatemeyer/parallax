@@ -1,6 +1,6 @@
 # Parallax — Master Design
 
-**Status:** draft, pending your review before we move to planning.
+**Status:** approved. Sub-project #1 (Plumb) is implemented through Arc 5; sub-project #2 (`parallax-baseline`) has an approved plan at `docs/design/plans/parallax/2026-08-14-parallax-baseline-plan.md` and has not started.
 **Date:** 2026-08-14
 **Scope:** the master design binding TTUI, Model-Experiments, and
 `plumb` into one system. Specs sub-project #2

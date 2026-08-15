@@ -1,6 +1,6 @@
 # Plumb — Design
 
-**Status:** draft, pending your review before we move to planning.
+**Status:** approved. Implementation is underway — see `docs/design/plans/plumb/2026-08-14-plumb-plan.md`, whose "Corrections applied during execution" section records where this spec was found wrong by evidence from real runs.
 **Date:** 2026-08-14
 **Relationship to prior work:** generalizes `tools/visual-snapshot`
 (`docs/design/specs/core/2026-08-09-visual-snapshot-tooling-design.md`)
