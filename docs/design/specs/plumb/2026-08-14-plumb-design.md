@@ -387,9 +387,26 @@ Feeding "the user likes X" into the prompt would bias the whole review
 and quietly blind it to real regressions in that region. This way the
 eyes never learn to stop seeing.
 
-A ruling records a finding fingerprint (lens + scenario + region +
-normalized claim), your reasoning, the date, and a **content hash of
-`taste.md` at ruling time**. Three consequences:
+A ruling records a finding fingerprint (**scenario + region +
+normalized claim**), your reasoning, the date, the severity of the
+finding you overruled, and a **content hash of `taste.md` at ruling
+time**. Three consequences:
+
+**Corrected 2026-08-15.** This originally read "lens + scenario +
+region + normalized claim". The lens is deliberately **excluded** from
+the fingerprint: with it included, the same observation raised by a
+*second* lens produces a different fingerprint and slips past a ruling
+already made against the first, so the report resumes repeating exactly
+what the ruling exists to stop. The `Ruling` record still stores the
+lens that originally raised the finding; it simply is not part of the
+identity.
+
+That exclusion opens a hole, which is why a ruling also records the
+**severity** it was made against: a ruling suppresses only findings **at
+or below that severity**. Without it, overruling a cosmetic nit in one
+region would silence a blocker later found in the same region — a
+lens-free identity makes that collision reachable, and the ceiling is
+what closes it.
 
 - Suppression is **scoped to the scenario by default**
   (`scope: project-wide` is opt-in), so overruling one screen's density
