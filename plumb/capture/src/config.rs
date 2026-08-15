@@ -2,6 +2,7 @@
 //! defines what gets captured, what each capture is for, and which
 //! source paths make it relevant. Deliberately holds no runtime state.
 
+use crate::glyph::GlyphMode;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -37,6 +38,8 @@ pub enum Expectation {
 /// fields (`size`, `script`, `on_unmapped_glyph`), and every test
 /// helper in this crate builds a `Scenario` with `..Default::default()`
 /// so that addition needs no edits to earlier tasks' tests.
+/// `on_unmapped_glyph` landed in Task 20; `size`/`script` remain
+/// pending.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Scenario {
     /// Unique name; also the captured image's filename stem.
@@ -57,6 +60,15 @@ pub struct Scenario {
     /// Globs whose modification makes this scenario worth reviewing.
     #[serde(default)]
     pub touches: Vec<String>,
+    /// How this scenario's `pty` capture reacts to an unmapped
+    /// codepoint: hard-error (the default, `GlyphMode::Error`) or
+    /// substitute a placeholder and disclose it as a manifest caveat
+    /// (`GlyphMode::Substitute`). A per-scenario field rather than only
+    /// a CLI flag, since only some scenarios hit unmapped glyphs — a
+    /// scenario that never draws one never needs to opt in. No effect
+    /// on a `command`/`window` scenario; meaningful for `pty` only.
+    #[serde(default)]
+    pub on_unmapped_glyph: GlyphMode,
 }
 
 /// A parsed `.plumb/config.yaml`.
@@ -251,6 +263,24 @@ scenarios:
             "scenarios:\n  - name: a\n    adapter: command\n    args: 'cargo run -p thing --out fixed.png'\n    touches: ['src/**']\n",
         );
         assert!(matches!(load_config(&p), Err(ConfigError::MissingOutPlaceholder(n)) if n == "a"));
+    }
+
+    #[test]
+    fn on_unmapped_glyph_defaults_to_error_when_omitted() {
+        let (_d, p) = write(
+            "scenarios:\n  - name: a\n    adapter: pty\n    args: 'x'\n    touches: ['src/**']\n",
+        );
+        let s = &load_config(&p).unwrap().scenarios[0];
+        assert_eq!(s.on_unmapped_glyph, GlyphMode::Error);
+    }
+
+    #[test]
+    fn on_unmapped_glyph_substitute_parses() {
+        let (_d, p) = write(
+            "scenarios:\n  - name: a\n    adapter: pty\n    args: 'x'\n    on_unmapped_glyph: substitute\n    touches: ['src/**']\n",
+        );
+        let s = &load_config(&p).unwrap().scenarios[0];
+        assert_eq!(s.on_unmapped_glyph, GlyphMode::Substitute);
     }
 
     #[test]

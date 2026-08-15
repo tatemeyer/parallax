@@ -3,6 +3,7 @@
 //! back to silently blank glyphs: an unmapped codepoint is a hard error.
 
 use font8x8::{UnicodeFonts, BASIC_FONTS, BLOCK_FONTS, BOX_FONTS, LATIN_FONTS, MISC_FONTS};
+use serde::Deserialize;
 
 /// A codepoint that none of the checked `font8x8` tables cover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,8 +13,16 @@ pub enum GlyphError {
 }
 
 /// How the `pty` adapter's capture loop reacts to an unmapped codepoint:
-/// hard-error naming it (the only behavior Task 19 wires up), or
-/// substitute a placeholder glyph and record the substitution (Task 20).
+/// hard-error naming it, or substitute a placeholder glyph and record
+/// the substitution as a disclosed caveat (`glyph_for_mode`,
+/// `render::render_screen`). `error` stays the default so
+/// `tools/visual-snapshot`'s existing behavior is preserved exactly for
+/// anyone who wants it; a scenario opts into `substitute` via its own
+/// `on_unmapped_glyph` config field (`config::Scenario`).
+///
+/// `Deserialize` (`#[serde(rename_all = "lowercase")]`) matches the
+/// `--on-unmapped-glyph {error,substitute}` spelling so a scenario's
+/// YAML value and a future CLI flag's value can be the same string.
 ///
 /// Deviation from the brief's literal `impl Default for GlyphMode { fn
 /// default() -> Self { GlyphMode::Error } }`: `cargo clippy --all-targets
@@ -22,15 +31,36 @@ pub enum GlyphError {
 /// via `#[derive(Default)]` plus a `#[default]` variant attribute.
 /// Forced by the gate; behavior (`GlyphMode::default() ==
 /// GlyphMode::Error`) is identical either way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum GlyphMode {
     /// Propagate `GlyphError::Unmapped` and abort the capture.
     #[default]
     Error,
     /// Draw a placeholder glyph in place of an unmapped codepoint and
-    /// record the substitution instead of failing. Not yet implemented
-    /// by `run_script` — landing in Task 20.
+    /// record the substitution instead of failing.
     Substitute,
+}
+
+/// The visible placeholder `glyph_for_mode` returns in
+/// `GlyphMode::Substitute` for a codepoint `glyph_for` cannot map: a
+/// hollow 8x8 rectangle — visible, obviously not text, and distinct
+/// from every box-drawing glyph `BOX_FONTS` already covers (none of
+/// which are a single unbroken hollow square with no interior detail).
+pub const PLACEHOLDER_BOX: [u8; 8] = [0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0xFF];
+
+/// `glyph_for`, but under `mode`: `Error` propagates
+/// `GlyphError::Unmapped` unchanged (the existing, still-default
+/// behavior); `Substitute` returns [`PLACEHOLDER_BOX`] instead of
+/// failing. A mapped codepoint is unaffected by `mode` either way.
+pub fn glyph_for_mode(ch: char, mode: GlyphMode) -> Result<[u8; 8], GlyphError> {
+    match glyph_for(ch) {
+        Ok(bitmap) => Ok(bitmap),
+        Err(e) => match mode {
+            GlyphMode::Error => Err(e),
+            GlyphMode::Substitute => Ok(PLACEHOLDER_BOX),
+        },
+    }
 }
 
 /// Looks up `ch`'s 8x8 bitmap across every font8x8 table TTUI's actual
@@ -180,6 +210,54 @@ mod tests {
     #[test]
     fn glyph_mode_defaults_to_error() {
         assert_eq!(GlyphMode::default(), GlyphMode::Error);
+    }
+
+    #[test]
+    fn error_mode_still_hard_errors_on_an_unmapped_codepoint() {
+        // The existing default is preserved verbatim for anyone who wants it.
+        assert_eq!(
+            glyph_for_mode('\u{2726}', GlyphMode::Error).unwrap_err(),
+            GlyphError::Unmapped('\u{2726}')
+        );
+    }
+
+    #[test]
+    fn substitute_mode_returns_a_visible_placeholder_box() {
+        let b = glyph_for_mode('\u{2726}', GlyphMode::Substitute).unwrap();
+        assert_eq!(b, PLACEHOLDER_BOX);
+        assert!(b.iter().any(|r| *r != 0), "a placeholder must be visible");
+        assert_ne!(
+            b,
+            glyph_for('A').unwrap(),
+            "and distinguishable from real content"
+        );
+    }
+
+    #[test]
+    fn substitute_mode_does_not_disturb_a_mapped_codepoint() {
+        assert_eq!(
+            glyph_for_mode('A', GlyphMode::Substitute).unwrap(),
+            glyph_for('A').unwrap()
+        );
+    }
+
+    #[test]
+    fn error_is_the_default_mode() {
+        assert_eq!(GlyphMode::default(), GlyphMode::Error);
+    }
+
+    #[test]
+    fn glyph_mode_deserializes_from_the_cli_flags_lowercase_spellings() {
+        // Matches `--on-unmapped-glyph {error,substitute}` exactly, so a
+        // scenario's YAML value and a future CLI flag's value read the same.
+        assert_eq!(
+            serde_yaml::from_str::<GlyphMode>("error").unwrap(),
+            GlyphMode::Error
+        );
+        assert_eq!(
+            serde_yaml::from_str::<GlyphMode>("substitute").unwrap(),
+            GlyphMode::Substitute
+        );
     }
 
     #[test]

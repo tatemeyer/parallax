@@ -36,3 +36,6 @@ name = "delayed_key_response"
 
 [[example]]
 name = "echo_mouse"
+
+[[example]]
+name = "echo_unmapped_glyph"

@@ -273,6 +273,54 @@ fn a_disclosed_caveat_reaches_every_lens() {
     }
 }
 
+/// Task 20: confirms `a_disclosed_caveat_reaches_every_lens` (above)
+/// still holds when the `Caveat` comes from a *real* substituted
+/// capture — real pixel data through `render::render_screen` in
+/// `GlyphMode::Substitute`, not a hand-set flag — rather than a
+/// hand-built `Caveat` value. Bridges `render.rs`'s own
+/// `substitutions_are_counted_per_codepoint_for_the_manifest` test
+/// (which stops at the count) the rest of the way to what a lens agent
+/// actually reads.
+#[test]
+fn a_real_substituted_capture_still_reaches_the_lens_as_a_disclosed_caveat() {
+    let mut parser = vt100::Parser::new(1, 3, 0);
+    parser.process("\u{2726}\u{2726}A".as_bytes());
+    let rendered =
+        crate::render::render_screen(parser.screen(), crate::glyph::GlyphMode::Substitute).unwrap();
+    // Real pixel data: the placeholder actually drew at the substituted
+    // cell, not just a count with nothing behind it.
+    let placeholder_cell = rendered.image.get_pixel(0, 0);
+    assert_ne!(*placeholder_cell, image::Rgba([0, 0, 0, 255]));
+    assert_eq!(rendered.substitutions.get(&'\u{2726}'), Some(&2));
+
+    let mut manifest = m(1, Some("i"), vec![]);
+    manifest.caveats = rendered
+        .substitutions
+        .iter()
+        .map(|(&ch, &count)| Caveat::UnmappedGlyphSubstituted {
+            codepoint: format!("U+{:04X}", ch as u32),
+            count,
+        })
+        .collect();
+
+    for lens in [Lens::Breakage, Lens::Intent, Lens::Design, Lens::Motion] {
+        let p = build_prompt(&LensInputs {
+            lens,
+            manifest: &manifest,
+            taste: Some("t"),
+            taste_override: None,
+        });
+        assert!(
+            p.contains("U+2726"),
+            "{lens:?} must be told about placeholders"
+        );
+        assert!(
+            p.contains("do not judge"),
+            "{lens:?} must be told not to judge them"
+        );
+    }
+}
+
 #[test]
 fn dispatch_batches_at_the_concurrency_cap_and_reports_the_cap() {
     let manifests: Vec<_> = (0..3)

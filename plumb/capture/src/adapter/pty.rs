@@ -167,6 +167,18 @@ pub struct Session {
     #[allow(dead_code)]
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    // How `capture_frame`/`capture_frame_after_key` react to an
+    // unmapped codepoint — `set_glyph_mode` is the only way to change
+    // this away from the default `GlyphMode::Error`, so no existing
+    // caller of `Session::spawn`/`capture_frame` (this module's own
+    // tests, `tests/pty_roundtrip.rs`) needs to change: their behavior
+    // is identical to before this field existed.
+    glyph_mode: GlyphMode,
+    // Every unmapped-codepoint substitution recorded across every
+    // `capture_frame`/`capture_frame_after_key` call made on this
+    // session so far, folded by `run_script` into `CaptureFrames::
+    // substitutions`. Always empty under the default `GlyphMode::Error`.
+    substitutions: std::collections::HashMap<char, usize>,
 }
 
 impl Session {
@@ -278,7 +290,38 @@ impl Session {
             first_capture_done: false,
             master: pair.master,
             child,
+            glyph_mode: GlyphMode::default(),
+            substitutions: std::collections::HashMap::new(),
         })
+    }
+
+    /// Sets the mode used by every subsequent `capture_frame`/
+    /// `capture_frame_after_key` call on this session. `run_script`
+    /// calls this once, immediately after spawning, so a scenario's
+    /// declared `on_unmapped_glyph` reaches every frame it captures.
+    pub fn set_glyph_mode(&mut self, mode: GlyphMode) {
+        self.glyph_mode = mode;
+    }
+
+    /// Every unmapped-codepoint substitution recorded across every
+    /// `capture_frame`/`capture_frame_after_key` call made on this
+    /// session so far, as `(codepoint, total cells substituted)` pairs —
+    /// the shape `CaptureFrames::substitutions` and `manifest::Caveat::
+    /// UnmappedGlyphSubstituted` both consume. Empty under
+    /// `GlyphMode::Error` (which never substitutes), and for any
+    /// `GlyphMode::Substitute` session that never actually hit an
+    /// unmapped codepoint.
+    pub fn substitutions(&self) -> Vec<(char, usize)> {
+        self.substitutions.iter().map(|(&c, &n)| (c, n)).collect()
+    }
+
+    /// Folds one capture's per-codepoint substitution counts into this
+    /// session's running total. Shared by `capture_frame` and
+    /// `capture_frame_after_key`.
+    fn record_substitutions(&mut self, counts: &std::collections::HashMap<char, usize>) {
+        for (&ch, &n) in counts {
+            *self.substitutions.entry(ch).or_insert(0) += n;
+        }
     }
 
     /// Waits for the child's current draw to quiesce, then rasterizes
@@ -322,7 +365,9 @@ impl Session {
             self.wait_for_first_output(deadline);
             self.first_capture_done = true;
         }
-        Ok(render::render_screen(self.parser.screen())?)
+        let rendered = render::render_screen(self.parser.screen(), self.glyph_mode)?;
+        self.record_substitutions(&rendered.substitutions);
+        Ok(rendered.image)
     }
 
     /// Captures a frame using the same patient quiescence contract as a
@@ -346,7 +391,9 @@ impl Session {
         let deadline = Instant::now() + MAX_SETTLE_WAIT;
         self.wait_for_first_output(deadline);
         self.first_capture_done = true;
-        Ok(render::render_screen(self.parser.screen())?)
+        let rendered = render::render_screen(self.parser.screen(), self.glyph_mode)?;
+        self.record_substitutions(&rendered.substitutions);
+        Ok(rendered.image)
     }
 
     /// Quiescence strategy for every capture after a session's first —
@@ -502,6 +549,7 @@ const KEY_STEP_DISPLAY_DURATION: Duration = Duration::from_millis(150);
 
 /// One `run_script` invocation's captured frames, and the unmapped-glyph
 /// substitutions recorded while rendering them.
+#[derive(Debug)]
 pub struct CaptureFrames {
     /// One rendered frame per script step, plus an initial frame
     /// captured before any step runs — each paired with the wall-clock
@@ -509,9 +557,12 @@ pub struct CaptureFrames {
     pub frames: Vec<(image::RgbaImage, Duration)>,
     /// `(codepoint, occurrence count)` pairs recorded when
     /// `GlyphMode::Substitute` stood in for an unmapped glyph rather
-    /// than erroring. Always empty as of this task: `run_script`
-    /// accepts `GlyphMode` but doesn't yet give `Substitute` its own
-    /// behavior — see `run_script`'s doc comment.
+    /// than erroring, aggregated across every frame this run captured.
+    /// Always empty under `GlyphMode::Error` (which never substitutes —
+    /// an unmapped codepoint fails the whole capture via `?` instead).
+    /// The caller (the future `adapter::capture` pty wiring, Task 21)
+    /// folds each entry into a `manifest::Caveat::
+    /// UnmappedGlyphSubstituted { codepoint, count }`.
     pub substitutions: Vec<(char, usize)>,
 }
 
@@ -521,14 +572,11 @@ pub struct CaptureFrames {
 /// rendered frame per step plus an initial frame captured before any
 /// step runs.
 ///
-/// `glyph_mode` is threaded through so this signature doesn't change
-/// again once `GlyphMode::Substitute` is implemented, but this task
-/// doesn't give it distinct behavior yet: every capture still hard-
-/// errors via `?` on an unmapped glyph (`Session::capture_frame`'s
-/// `render::render_screen` call, propagated through `PtyError::Render`)
-/// regardless of which variant is passed, and `CaptureFrames::
-/// substitutions` always comes back empty. Task 20 is what makes
-/// `Substitute` actually substitute and populate that field.
+/// `glyph_mode` governs every frame this call captures: `GlyphMode::
+/// Error` (the default) hard-errors via `?` on the first unmapped
+/// codepoint, same as before this parameter existed; `GlyphMode::
+/// Substitute` draws a placeholder in its place instead and returns the
+/// per-codepoint counts in `CaptureFrames::substitutions`.
 pub fn run_script(
     command: &[String],
     rows: u16,
@@ -536,15 +584,8 @@ pub fn run_script(
     steps: &[Step],
     glyph_mode: GlyphMode,
 ) -> Result<CaptureFrames, PtyError> {
-    match glyph_mode {
-        GlyphMode::Error => {}
-        GlyphMode::Substitute => {
-            // Not yet implemented — see this function's doc comment.
-            // Both arms behave identically until Task 20.
-        }
-    }
-
     let mut session = Session::spawn(command, rows, cols)?;
+    session.set_glyph_mode(glyph_mode);
     let mut frames = Vec::with_capacity(steps.len() + 1);
 
     frames.push((session.capture_frame()?, Duration::from_millis(0)));
@@ -582,9 +623,10 @@ pub fn run_script(
     }
 
     session.kill()?;
+    let substitutions = session.substitutions();
     Ok(CaptureFrames {
         frames,
-        substitutions: Vec::new(),
+        substitutions,
     })
 }
 
@@ -616,6 +658,19 @@ mod tests {
 
     fn echo_key_command() -> Vec<String> {
         vec![echo_key_binary().to_string_lossy().into_owned()]
+    }
+
+    fn echo_unmapped_glyph_binary() -> PathBuf {
+        let mut path = examples_dir();
+        path.push("echo_unmapped_glyph");
+        if cfg!(windows) {
+            path.set_extension("exe");
+        }
+        path
+    }
+
+    fn echo_unmapped_glyph_command() -> Vec<String> {
+        vec![echo_unmapped_glyph_binary().to_string_lossy().into_owned()]
     }
 
     /// Guards finding #1 from the source's Task 8 review: cleanup must
@@ -708,6 +763,54 @@ mod tests {
             Err(e) => e,
         };
         assert!(matches!(err, PtyError::Pty(_)));
+    }
+
+    /// Real pixel data through a real spawned child, not a mocked mode
+    /// flag: `echo_unmapped_glyph` writes a real unmapped codepoint,
+    /// `run_script` in `GlyphMode::Substitute` must render a visible
+    /// placeholder (checked as an actual non-background pixel, not just
+    /// that capture succeeded) and report the substitution count.
+    #[test]
+    fn run_script_in_substitute_mode_renders_a_real_placeholder_and_records_the_count() {
+        let out = run_script(
+            &echo_unmapped_glyph_command(),
+            5,
+            40,
+            &[],
+            GlyphMode::Substitute,
+        )
+        .unwrap();
+
+        assert_eq!(out.frames.len(), 1, "no steps: just the initial frame");
+        let img = &out.frames[0].0;
+        let top_left = img.get_pixel(0, 0);
+        assert_ne!(
+            *top_left,
+            image::Rgba([0, 0, 0, 255]),
+            "expected the placeholder box to actually draw at (0, 0)"
+        );
+        assert_eq!(out.substitutions, vec![('\u{2726}', 1)]);
+    }
+
+    /// Companion to the above: the same real unmapped glyph, but under
+    /// `GlyphMode::Error` (the default), must still hard-error rather
+    /// than silently substitute — proves `run_script` didn't quietly
+    /// start substituting unconditionally.
+    #[test]
+    fn run_script_in_error_mode_still_hard_errors_on_the_same_real_unmapped_glyph() {
+        let err =
+            run_script(&echo_unmapped_glyph_command(), 5, 40, &[], GlyphMode::Error).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                PtyError::Render(RenderError::Glyph(
+                    crate::glyph::GlyphError::Unmapped('\u{2726}'),
+                    0,
+                    0
+                ))
+            ),
+            "expected a named Glyph render error at (0, 0), got {err:?}"
+        );
     }
 
     #[test]
