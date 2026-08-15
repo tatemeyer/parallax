@@ -21,6 +21,16 @@
 //! themselves anymore. Everything else — PTY setup, the DSR handshake,
 //! the vt100 parsing, the frame-capture loop, and both quiescence
 //! strategies — is a copy.
+//!
+//! **Deliberately exceeds the project's 500-line soft ceiling.** This
+//! file is a faithful port of a 744-line source, and that fidelity —
+//! verified hunk-by-hunk against `tools/visual-snapshot/src/pty.rs` — is
+//! exactly what makes it trustworthy: splitting proven, review-verified
+//! code into pieces would turn a verifiable copy into a rewrite, in
+//! exchange for satisfying a soft ceiling on a file nobody is expected to
+//! edit freehand. This exception is tied to the file's provenance as a
+//! port, not a blanket waiver — if this module is ever substantially
+//! rewritten rather than ported, the ceiling applies again.
 
 use crate::glyph::GlyphMode;
 use crate::keys;
