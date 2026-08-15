@@ -9,7 +9,10 @@ pub mod pty;
 pub mod window;
 
 use crate::config::{AdapterKind, Scenario};
-use crate::manifest::RunManifest;
+use crate::contact::write_contact_sheet;
+use crate::encode::{self, EncodeError};
+use crate::manifest::{Caveat, RunManifest};
+use crate::script;
 use std::path::{Path, PathBuf};
 
 /// An image that could not be opened or decoded, together with the
@@ -74,6 +77,15 @@ pub enum CaptureError {
     /// A multi-frame capture's contact sheet could not be assembled or
     /// written.
     ContactSheetWrite(ContactSheetFailure),
+    /// A `pty` scenario's `size`/`script`/`args` fields could not be
+    /// turned into something the adapter can run: no `size` declared,
+    /// a `size` not shaped like `COLSxROWS`, or a `script` that failed
+    /// to parse.
+    InvalidPtyConfig(String),
+    /// The `pty` adapter's spawn/drive/render process failed.
+    Pty(pty::PtyError),
+    /// A captured frame (or frames) could not be written to disk.
+    Encode(EncodeError),
 }
 
 impl std::fmt::Display for CaptureError {
@@ -105,6 +117,11 @@ impl std::fmt::Display for CaptureError {
                     e.source
                 )
             }
+            CaptureError::InvalidPtyConfig(msg) => {
+                write!(f, "invalid pty scenario config: {msg}")
+            }
+            CaptureError::Pty(e) => write!(f, "pty capture failed: {e}"),
+            CaptureError::Encode(e) => write!(f, "could not write captured frame(s): {e}"),
         }
     }
 }
@@ -159,10 +176,7 @@ pub fn capture(
 ) -> Result<RunManifest, CaptureError> {
     match scenario.adapter {
         AdapterKind::Command => command::capture_command(scenario, run_dir, run_id),
-        AdapterKind::Pty => Err(CaptureError::NotImplemented {
-            adapter: "pty",
-            reason: "landing in Arc 5; use the `command` adapter meanwhile",
-        }),
+        AdapterKind::Pty => capture_pty(scenario, run_dir, run_id),
         AdapterKind::Window => Err(CaptureError::NotImplemented {
             adapter: "window",
             reason: "deferred — no consumer exists yet (TTUI is a TUI, \
@@ -170,6 +184,101 @@ pub fn capture(
                      it, the implementation is out of v1 scope",
         }),
     }
+}
+
+/// Parses a `size` field (`COLSxROWS`, e.g. `80x24`) into `(cols, rows)`
+/// — the order `pty::Session::spawn`/`run_script` expect their `rows,
+/// cols` parameters reversed from. `None` (a `pty` scenario with no
+/// declared size) and a malformed value are both reported as
+/// [`CaptureError::InvalidPtyConfig`], since neither is something the
+/// adapter can recover from.
+fn parse_size(size: Option<&str>) -> Result<(u16, u16), CaptureError> {
+    let size = size.ok_or_else(|| {
+        CaptureError::InvalidPtyConfig("a `pty` scenario requires a `size` field".to_string())
+    })?;
+    let (cols, rows) = size.trim().split_once('x').ok_or_else(|| {
+        CaptureError::InvalidPtyConfig(format!("size {size:?} must be COLSxROWS, e.g. \"80x24\""))
+    })?;
+    let malformed = || {
+        CaptureError::InvalidPtyConfig(format!("size {size:?} must be COLSxROWS, e.g. \"80x24\""))
+    };
+    let cols: u16 = cols.parse().map_err(|_| malformed())?;
+    let rows: u16 = rows.parse().map_err(|_| malformed())?;
+    Ok((cols, rows))
+}
+
+/// Runs a `pty` scenario: splits `scenario.args` into argv, spawns it
+/// under a pseudo-console sized from `scenario.size`, drives it through
+/// `scenario.script`'s steps (or captures a single frame if none is
+/// declared), and writes the result to disk exactly as `command`'s
+/// contract requires — a `.png` for one frame, a `.gif` plus a tiled
+/// contact sheet for 2+. Every unmapped-glyph substitution
+/// `run_script` recorded is folded into a `Caveat::
+/// UnmappedGlyphSubstituted` on the returned manifest, closing the path
+/// from an unmapped codepoint to the sentence a lens agent reads.
+fn capture_pty(
+    scenario: &Scenario,
+    run_dir: &Path,
+    run_id: &str,
+) -> Result<RunManifest, CaptureError> {
+    let command: Vec<String> = scenario.args.split_whitespace().map(String::from).collect();
+    let (cols, rows) = parse_size(scenario.size.as_deref())?;
+    let steps = match &scenario.script {
+        Some(path) => {
+            script::parse_script(path).map_err(|e| CaptureError::InvalidPtyConfig(e.to_string()))?
+        }
+        None => Vec::new(),
+    };
+
+    let captured_frames = pty::run_script(&command, rows, cols, &steps, scenario.on_unmapped_glyph)
+        .map_err(CaptureError::Pty)?;
+    let frame_count = captured_frames.frames.len();
+
+    let stem = run_dir.join(&scenario.name);
+    let captured = if frame_count >= 2 {
+        let path = stem.with_extension("gif");
+        encode::write_gif(&captured_frames.frames, &path).map_err(CaptureError::Encode)?;
+        path
+    } else {
+        let path = stem.with_extension("png");
+        encode::write_png(&captured_frames.frames[0].0, &path).map_err(CaptureError::Encode)?;
+        path
+    };
+
+    // Same contact-sheet promotion `command::capture_command` applies:
+    // a single-frame capture's `image` is the raw capture; 2+ frames
+    // gets a freshly-tiled contact sheet as `image`, keeping the GIF as
+    // `animation` for a human to watch. Reuses `write_contact_sheet`
+    // directly rather than re-deriving the tiling logic.
+    let (image, animation) = if frame_count >= 2 {
+        let sheet_path = captured.with_extension("png");
+        write_contact_sheet(&captured, &sheet_path)?;
+        (sheet_path, Some(captured))
+    } else {
+        (captured, None)
+    };
+
+    let caveats = captured_frames
+        .substitutions
+        .iter()
+        .map(|&(ch, count)| Caveat::UnmappedGlyphSubstituted {
+            codepoint: format!("U+{:04X}", ch as u32),
+            count,
+        })
+        .collect();
+
+    Ok(RunManifest {
+        run_id: run_id.to_string(),
+        scenario: scenario.name.clone(),
+        adapter: "pty".into(),
+        image: image.file_name().map(Into::into).unwrap_or(image.clone()),
+        animation: animation.map(|a| a.file_name().map(Into::into).unwrap_or(a)),
+        frame_count,
+        size: scenario.size.clone(),
+        intent: scenario.intent.clone(),
+        expects: scenario.expects.clone(),
+        caveats,
+    })
 }
 
 #[cfg(test)]

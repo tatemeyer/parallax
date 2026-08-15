@@ -38,8 +38,8 @@ pub enum Expectation {
 /// fields (`size`, `script`, `on_unmapped_glyph`), and every test
 /// helper in this crate builds a `Scenario` with `..Default::default()`
 /// so that addition needs no edits to earlier tasks' tests.
-/// `on_unmapped_glyph` landed in Task 20; `size`/`script` remain
-/// pending.
+/// `on_unmapped_glyph` landed in Task 20; `size`/`script` landed in
+/// Task 21, completing the trio.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Scenario {
     /// Unique name; also the captured image's filename stem.
@@ -69,6 +69,18 @@ pub struct Scenario {
     /// on a `command`/`window` scenario; meaningful for `pty` only.
     #[serde(default)]
     pub on_unmapped_glyph: GlyphMode,
+    /// Pseudo-console size the `pty` adapter spawns into, as
+    /// `COLSxROWS` (e.g. `80x24`). Required for a `pty` scenario — the
+    /// adapter, not the spawned program, owns this geometry; unused by
+    /// `command`/`window`.
+    #[serde(default)]
+    pub size: Option<String>,
+    /// Path to a snapshot script (see `script::parse_script`) driving
+    /// the `pty` adapter's spawned target through waits, keys, and
+    /// clicks. `None` captures a single frame with no input sent.
+    /// Unused by `command`/`window`.
+    #[serde(default)]
+    pub script: Option<PathBuf>,
 }
 
 /// A parsed `.plumb/config.yaml`.
