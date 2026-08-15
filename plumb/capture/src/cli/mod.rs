@@ -7,6 +7,8 @@
 
 mod capture;
 mod init;
+mod merge;
+mod plan;
 mod select;
 
 use crate::Command;
@@ -108,6 +110,41 @@ pub(crate) fn dispatch(command: Command) -> i32 {
             }
             Err(e @ capture::CaptureCliError::Adapter(_)) => {
                 eprintln!("HOLD: capture failed: {e}");
+                2
+            }
+        },
+        Command::Plan {
+            run_dir,
+            taste,
+            cap,
+        } => match plan::run_plan(&run_dir, taste.as_deref(), cap) {
+            Ok(dispatch_plan) => {
+                println!("{}", plan::render_plan(dispatch_plan));
+                0
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                1
+            }
+        },
+        Command::Merge { run_dir, report } => match merge::run_merge(&run_dir, &report) {
+            Ok((verdict, path)) => {
+                println!("{}", path.display());
+                verdict.exit_code()
+            }
+            // A malformed `--report` argument is a usage mistake, not
+            // "the check could not be run" — stays exit 1, same
+            // treatment as Capture's UnknownScenario.
+            Err(e @ merge::MergeCliError::Usage(_)) => {
+                eprintln!("Error: {e}");
+                1
+            }
+            // A report file that could not be read, or a verdict.md
+            // that could not be written: merge itself never got to
+            // finish, distinct from any lens's own HOLD outcome inside
+            // a completed verdict. HOLD, never a silent GO or NO-GO.
+            Err(e @ merge::MergeCliError::Io(_)) => {
+                eprintln!("HOLD: merge could not run: {e}");
                 2
             }
         },

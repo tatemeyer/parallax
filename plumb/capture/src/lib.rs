@@ -12,3 +12,4 @@ pub mod manifest;
 pub mod merge;
 pub mod prompt;
 pub mod select;
+pub mod verdict;

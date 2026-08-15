@@ -22,8 +22,8 @@ struct Args {
     command: Command,
 }
 
-/// The implemented subcommands. `plan`, `merge`, and `rule` arrive with
-/// later tasks.
+/// The implemented subcommands. `rule` arrives with a later task
+/// (Arc 4).
 #[derive(Subcommand)]
 enum Command {
     /// Scaffold a `.plumb/` directory from the bundled templates.
@@ -55,6 +55,27 @@ enum Command {
         /// Which scenario to capture.
         #[arg(long)]
         scenario: String,
+    },
+    /// Plan a run's lens dispatch from its manifests, as JSON.
+    Plan {
+        /// Directory holding the run's `*.manifest.json` files.
+        #[arg(long)]
+        run_dir: PathBuf,
+        /// Path to `taste.md`, reaching the design lens only.
+        #[arg(long)]
+        taste: Option<PathBuf>,
+        /// Maximum lens dispatches per batch.
+        #[arg(long, default_value_t = parallax_plumb::prompt::DEFAULT_CONCURRENCY_CAP)]
+        cap: usize,
+    },
+    /// Merge lens reports, render `verdict.md`, and exit with its code.
+    Merge {
+        /// Directory to write `verdict.md` into.
+        #[arg(long)]
+        run_dir: PathBuf,
+        /// One `lens:scenario:file` triple per lens report to ingest.
+        #[arg(long)]
+        report: Vec<String>,
     },
 }
 
