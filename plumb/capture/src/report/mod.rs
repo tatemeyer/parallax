@@ -1,15 +1,23 @@
-//! Renders Plumb's evidence into a human-facing report. So far this
-//! Arc contributes contact-sheet frame geometry and PNG-to-data-URI
-//! encoding (`geometry`), conservative region-to-frame resolution
-//! (`region`), and the self-contained HTML skeleton a run renders into
-//! (`render`); assembling real evidence into that skeleton is a later
-//! task in this Arc and is deliberately not anticipated here.
+//! Renders Plumb's evidence into a human-facing report. `geometry`
+//! resolves contact-sheet frame rectangles and encodes images as
+//! `data:` URIs; `region` conservatively matches a finding's free-text
+//! region to a frame; `render` (plus the sibling `lens_render`) turns
+//! an assembled [`RunReport`] into a self-contained HTML document;
+//! `assemble` walks a run directory — manifests, prompts, replies,
+//! kept/dropped/clamped findings, and whatever a ruling later
+//! suppressed — and turns what's actually on disk into that
+//! `RunReport`. Read-only throughout: nothing under this module ever
+//! writes into the run directory it reads.
 
+pub mod assemble;
 pub mod geometry;
+mod lens_render;
 pub mod region;
 pub mod render;
 
+pub use assemble::build_run_report;
 pub use geometry::{crop_png_data_uri, frame_rect, png_data_uri, FrameRect};
+pub use lens_render::{LensReport, RenderedFinding};
 pub use region::resolve_frame;
 pub use render::{render_report, RunReport, ScenarioReport};
 

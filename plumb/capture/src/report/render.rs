@@ -8,6 +8,16 @@
 //! document gets attached to a PR or dropped in a docs folder, so it
 //! has to still render, unbroken, when opened somewhere with no
 //! network access.
+//!
+//! `report::mod` assembles a [`RunReport`] from a run directory; this
+//! module only turns one into HTML text and never touches the
+//! filesystem itself. Per-lens section rendering (findings, discards,
+//! the attrition chain) lives in the sibling `lens_render` module —
+//! split out on line-count grounds; this module keeps only the
+//! document skeleton and the scenario level.
+
+use crate::evidence::Evidence;
+use crate::report::lens_render::{render_lens, LensReport};
 
 /// One captured run's evidence, as the top-level input to
 /// [`render_report`].
@@ -19,31 +29,64 @@ pub struct RunReport {
     /// a missing version reads as missing evidence, not a rendering
     /// bug.
     pub contract_version: Option<u32>,
+    /// The run's `verdict.md`, rendered once above every scenario
+    /// section rather than repeated per scenario — a run carries
+    /// exactly one verdict even when it captured several scenarios.
+    pub verdict: Evidence<String>,
     /// Every scenario captured in this run.
     pub scenarios: Vec<ScenarioReport>,
 }
 
-/// One scenario's evidence within a run. Stub for this task — Task 8
-/// fills it with the scenario's captured frames, each lens's prompt
-/// and raw reply, and its findings. Only `scenario` exists here so
-/// [`render_report`] has something to name per scenario; Task 8 adds
-/// fields rather than reshaping this one, so nothing here should need
-/// to change to accommodate it.
+/// One scenario's evidence within a run: its contact sheet and each
+/// lens's findings.
 pub struct ScenarioReport {
     /// The scenario's name, as recorded in the manifest.
     pub scenario: String,
+    /// A `data:image/png;base64,…` encoding of the scenario's capture
+    /// (the tiled contact sheet for a multi-frame capture, or the bare
+    /// image for a single frame), or `None` when the image could not
+    /// be read or encoded — the report still renders in that case, it
+    /// just shows no sheet.
+    pub sheet_uri: Option<String>,
+    /// How many frames the capture holds, as recorded in the manifest.
+    pub frame_count: usize,
+    /// This scenario's evidence from each of the four lenses.
+    pub lenses: Vec<LensReport>,
 }
 
 /// Escapes `&`, `<`, `>`, and `"` for safe interpolation into HTML text
 /// or a double-quoted attribute. `&` is escaped first, deliberately —
 /// escaping any of the other three characters first would then have
 /// its own inserted `&` re-escaped by the `&` pass, corrupting the
-/// entity.
-fn html_escape(s: &str) -> String {
+/// entity. `pub(crate)` (not private): `lens_render` renders arbitrary
+/// model output too (claims, evidence text, raw replies) and must
+/// route through the exact same escaping, not a second copy of it.
+pub(crate) fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Renders an `Evidence<String>`'s three states identically wherever a
+/// bare piece of text (a prompt, a verdict) needs to show them:
+/// `Missing` as an explicit "not persisted" marker, `Unparseable` as
+/// "present but unparseable" with the raw text still shown, `Present`
+/// as the text itself — always inside a `<pre>` so whitespace and line
+/// breaks survive. `pub(crate)`: shared with `lens_render`'s prompt
+/// rendering so both use one implementation of the three-state rule.
+pub(crate) fn render_text_evidence(label: &str, evidence: &Evidence<String>) -> String {
+    match evidence {
+        Evidence::Missing => format!("<p class=\"empty\">{label}: not persisted</p>\n"),
+        Evidence::Unparseable(raw) => format!(
+            "<p>{label}: present but unparseable</p>\n<pre>{}</pre>\n",
+            html_escape(raw)
+        ),
+        Evidence::Present(text) => format!(
+            "<details><summary>{label}</summary>\n<pre>{}</pre>\n</details>\n",
+            html_escape(text)
+        ),
+    }
 }
 
 /// The report's inline stylesheet. No `@import`, no `url(...)` to an
@@ -82,6 +125,10 @@ h2 {
   padding-top: 1rem;
   margin-top: 2rem;
 }
+h3 {
+  font-size: 1rem;
+  margin-top: 1.5rem;
+}
 dl.meta {
   display: grid;
   grid-template-columns: max-content 1fr;
@@ -102,9 +149,35 @@ dl.meta dd {
   padding: 1rem;
   margin-bottom: 1.5rem;
 }
+.lens {
+  border-top: 1px dashed #ccc;
+  padding-top: 0.75rem;
+  margin-top: 1rem;
+}
+.finding {
+  border-left: 3px solid #888;
+  padding: 0.25rem 0 0.25rem 0.75rem;
+  margin: 0.5rem 0;
+}
 .empty {
   color: #555;
   font-style: italic;
+}
+.evidence {
+  color: #444;
+}
+img.sheet, img.crop {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #ccc;
+  display: block;
+  margin: 0.5rem 0;
+}
+details {
+  margin: 0.35rem 0;
+}
+summary {
+  cursor: pointer;
 }
 pre, code {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
@@ -122,21 +195,44 @@ pre {
 }
 "#;
 
-/// Renders one scenario's evidence block. Task 8 replaces this body
-/// with the scenario's frames, prompts, replies, and findings; for
-/// this task's stub `ScenarioReport` it renders only the escaped
-/// scenario name.
-fn render_scenario(scenario: &ScenarioReport) -> String {
+/// Renders the run's `verdict.md` once, above every scenario section.
+fn render_verdict(verdict: &Evidence<String>) -> String {
     format!(
-        "<section class=\"scenario\">\n<h2>{}</h2>\n</section>\n",
-        html_escape(&scenario.scenario)
+        "<section class=\"verdict\">\n<h2>Verdict</h2>\n{}</section>\n",
+        render_text_evidence("verdict.md", verdict)
     )
+}
+
+/// Renders one scenario's evidence block: its contact sheet, then each
+/// lens's section in turn (via `lens_render::render_lens`).
+fn render_scenario(scenario: &ScenarioReport) -> String {
+    let mut out = format!(
+        "<section class=\"scenario\">\n<h2>{}</h2>\n<p>Frames: {}</p>\n",
+        html_escape(&scenario.scenario),
+        scenario.frame_count
+    );
+
+    match &scenario.sheet_uri {
+        Some(uri) => out.push_str(&format!(
+            "<img class=\"sheet\" src=\"{}\" alt=\"contact sheet\">\n",
+            html_escape(uri)
+        )),
+        None => out.push_str("<p class=\"empty\">contact sheet not available</p>\n"),
+    }
+
+    for lens in &scenario.lenses {
+        out.push_str(&render_lens(lens));
+    }
+
+    out.push_str("</section>\n");
+    out
 }
 
 /// Renders `run` as a complete, self-contained HTML document: no
 /// `<link>`, no `http://`/`https://` reference, no relative image
-/// path — every image Task 8 embeds arrives pre-encoded as a `data:`
-/// URI, and every other resource (styles, fonts) is inlined here.
+/// path — every image `report::build_run_report` embeds arrives
+/// pre-encoded as a `data:` URI, and every other resource (styles,
+/// fonts) is inlined here.
 pub fn render_report(run: &RunReport) -> String {
     let version = run
         .contract_version
@@ -167,6 +263,7 @@ pub fn render_report(run: &RunReport) -> String {
 </dl>\n\
 </header>\n\
 <main>\n\
+{verdict}\
 {body}\
 </main>\n\
 </body>\n\
@@ -175,6 +272,7 @@ pub fn render_report(run: &RunReport) -> String {
         style = STYLE,
         version = html_escape(&version),
         scenario_count = run.scenarios.len(),
+        verdict = render_verdict(&run.verdict),
         body = body,
     )
 }
@@ -183,13 +281,18 @@ pub fn render_report(run: &RunReport) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn the_rendered_report_references_no_external_resource() {
-        let html = render_report(&RunReport {
+    fn empty_run() -> RunReport {
+        RunReport {
             run_id: "r".into(),
             contract_version: Some(1),
+            verdict: Evidence::Missing,
             scenarios: vec![],
-        });
+        }
+    }
+
+    #[test]
+    fn the_rendered_report_references_no_external_resource() {
+        let html = render_report(&empty_run());
         assert!(!html.contains("http://"), "no external URL");
         assert!(!html.contains("https://"), "no external URL");
         assert!(!html.contains("<link"), "no external stylesheet or font");
@@ -208,13 +311,15 @@ mod tests {
 
     #[test]
     fn a_scenario_name_containing_a_script_tag_survives_escaped_in_the_report() {
-        let html = render_report(&RunReport {
-            run_id: "r".into(),
-            contract_version: None,
-            scenarios: vec![ScenarioReport {
-                scenario: "<script>alert(1)</script> & friends".into(),
-            }],
+        let mut run = empty_run();
+        run.contract_version = None;
+        run.scenarios.push(ScenarioReport {
+            scenario: "<script>alert(1)</script> & friends".into(),
+            sheet_uri: None,
+            frame_count: 0,
+            lenses: vec![],
         });
+        let html = render_report(&run);
         assert!(
             !html.contains("<script>alert(1)</script>"),
             "raw script tag must not reach the document: {html}"
@@ -224,21 +329,64 @@ mod tests {
 
     #[test]
     fn a_missing_contract_version_renders_as_unknown_not_blank() {
-        let html = render_report(&RunReport {
-            run_id: "r".into(),
-            contract_version: None,
-            scenarios: vec![],
-        });
+        let mut run = empty_run();
+        run.contract_version = None;
+        let html = render_report(&run);
         assert!(html.contains("unknown"));
     }
 
     #[test]
     fn an_empty_run_still_reports_zero_scenarios_explicitly() {
-        let html = render_report(&RunReport {
-            run_id: "r".into(),
-            contract_version: Some(3),
-            scenarios: vec![],
-        });
+        let html = render_report(&empty_run());
         assert!(html.contains("No scenarios recorded for this run."));
+    }
+
+    #[test]
+    fn a_missing_verdict_says_not_persisted_rather_than_an_empty_section() {
+        let html = render_report(&empty_run());
+        assert!(html.contains("verdict.md: not persisted"));
+    }
+
+    #[test]
+    fn an_unparseable_verdict_shows_the_raw_text() {
+        let mut run = empty_run();
+        run.verdict = Evidence::Unparseable("not actually markdown &".into());
+        let html = render_report(&run);
+        assert!(html.contains("present but unparseable"));
+        assert!(html.contains("not actually markdown &amp;"));
+    }
+
+    #[test]
+    fn a_present_verdict_renders_its_text() {
+        let mut run = empty_run();
+        run.verdict = Evidence::Present("# Plumb verdict: GO (run r)\n".into());
+        let html = render_report(&run);
+        assert!(html.contains("Plumb verdict: GO (run r)"));
+    }
+
+    #[test]
+    fn a_scenario_with_no_sheet_says_so_rather_than_a_broken_image_tag() {
+        let mut run = empty_run();
+        run.scenarios.push(ScenarioReport {
+            scenario: "s".into(),
+            sheet_uri: None,
+            frame_count: 1,
+            lenses: vec![],
+        });
+        let html = render_report(&run);
+        assert!(html.contains("contact sheet not available"));
+    }
+
+    #[test]
+    fn a_scenario_with_a_sheet_embeds_it_as_a_data_uri() {
+        let mut run = empty_run();
+        run.scenarios.push(ScenarioReport {
+            scenario: "s".into(),
+            sheet_uri: Some("data:image/png;base64,AAAA".into()),
+            frame_count: 8,
+            lenses: vec![],
+        });
+        let html = render_report(&run);
+        assert!(html.contains("data:image/png;base64,AAAA"));
     }
 }
