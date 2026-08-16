@@ -10,8 +10,10 @@ use std::path::Path;
 
 /// Pixel width of the gutter drawn between and around every pane, so a
 /// lens can tell adjacent frames apart rather than reading one smeared
-/// image.
-const GUTTER_PX: u32 = 8;
+/// image. `pub(crate)` so `report::geometry` can mirror this exact
+/// layout when resolving a frame's crop rectangle, rather than
+/// hand-maintaining a second copy of the constant.
+pub(crate) const GUTTER_PX: u32 = 8;
 
 /// The gutter's fill colour: a flat mid-grey chosen to sit outside the
 /// range terminal captures actually use (near-black backgrounds through
@@ -50,8 +52,9 @@ fn decode_frames(path: &Path) -> Result<Vec<RgbaImage>, CaptureError> {
 /// capture, say) still gets a compact grid rather than one long strip.
 /// Reading order is row-major — left to right, then top to bottom —
 /// which is what "reading order" means for the frame placement this
-/// tiles.
-fn grid_dims(n: usize) -> (u32, u32) {
+/// tiles. `pub(crate)` so `report::geometry` can recompute the same
+/// grid a sheet was tiled with, rather than re-deriving it.
+pub(crate) fn grid_dims(n: usize) -> (u32, u32) {
     let n = (n.max(1)) as u32;
     let cols = (n as f64).sqrt().ceil() as u32;
     let cols = cols.max(1);

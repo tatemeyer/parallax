@@ -18,6 +18,7 @@ pub mod manifest;
 pub mod merge;
 pub mod prompt;
 pub mod render;
+pub mod report;
 pub mod rulings;
 pub mod script;
 pub mod select;

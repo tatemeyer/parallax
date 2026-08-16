@@ -20,6 +20,7 @@ image = "0.25"
 vt100 = "0.15"
 font8x8 = "0.3"
 portable-pty = "0.9"
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
