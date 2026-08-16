@@ -195,12 +195,21 @@ pre {
 }
 "#;
 
-/// Renders the run's `verdict.md` once, above every scenario section.
+/// Renders the run's `verdict.md` once, above every scenario section —
+/// always expanded, never behind a collapsed `<details>`. The verdict
+/// is the report's headline (the first thing a reader checks, "what
+/// was claimed"); collapse-by-default is reserved for prompts and raw
+/// replies, which `render_text_evidence` still handles that way.
 fn render_verdict(verdict: &Evidence<String>) -> String {
-    format!(
-        "<section class=\"verdict\">\n<h2>Verdict</h2>\n{}</section>\n",
-        render_text_evidence("verdict.md", verdict)
-    )
+    let body = match verdict {
+        Evidence::Missing => "<p class=\"empty\">verdict.md: not persisted</p>\n".to_string(),
+        Evidence::Unparseable(raw) => format!(
+            "<p>verdict.md: present but unparseable</p>\n<pre>{}</pre>\n",
+            html_escape(raw)
+        ),
+        Evidence::Present(text) => format!("<pre>{}</pre>\n", html_escape(text)),
+    };
+    format!("<section class=\"verdict\">\n<h2>Verdict</h2>\n{body}</section>\n")
 }
 
 /// Renders one scenario's evidence block: its contact sheet, then each
@@ -362,6 +371,21 @@ mod tests {
         run.verdict = Evidence::Present("# Plumb verdict: GO (run r)\n".into());
         let html = render_report(&run);
         assert!(html.contains("Plumb verdict: GO (run r)"));
+    }
+
+    #[test]
+    fn the_verdict_renders_expanded_not_collapsed_behind_details() {
+        // The verdict is the report's headline (spec question 1, "what
+        // was claimed") — collapse-by-default is reserved for prompts
+        // and raw replies. A reader opening the file to check a GO
+        // must not have to click anything first.
+        let mut run = empty_run();
+        run.verdict = Evidence::Present("# Plumb verdict: GO (run r)\n".into());
+        let html = render_report(&run);
+        assert!(
+            !html.contains("<details>"),
+            "the verdict must not be wrapped in a collapsed <details>: {html}"
+        );
     }
 
     #[test]

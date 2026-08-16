@@ -83,30 +83,53 @@ fn confidence_label(c: Confidence) -> &'static str {
     }
 }
 
-/// The number of items an `Evidence<Vec<T>>` carries for the purposes
-/// of the attrition chain; `0` for `Missing`/`Unparseable` since an
-/// unreadable count cannot be added into an arithmetic line — the
+/// A discard/clamp count for the attrition chain: a real number when
+/// the underlying evidence was `Present`, unknown otherwise. An
+/// unknown count must never render as `0` — that would make an
+/// unreadable artifact look like a healthy "found nothing" result, in
+/// the one line a hurried reader is most likely to read instead of
+/// the discard sections beside it.
+enum Count {
+    Known(usize),
+    Unknown,
+}
+
+impl std::fmt::Display for Count {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Count::Known(n) => write!(f, "{n}"),
+            Count::Unknown => write!(f, "?"),
+        }
+    }
+}
+
+/// The count an `Evidence<Vec<T>>` carries for the attrition chain:
+/// [`Count::Known`] for `Present`, [`Count::Unknown`] otherwise — the
 /// discard section rendered alongside it still shows the marker text,
-/// so the unreadable state itself is never hidden, only excluded from
-/// the count.
-fn evidence_len<T>(evidence: &Evidence<Vec<T>>) -> usize {
+/// so the unreadable state itself is never hidden, only kept out of
+/// the arithmetic.
+fn evidence_count<T>(evidence: &Evidence<Vec<T>>) -> Count {
     match evidence {
-        Evidence::Present(items) => items.len(),
-        _ => 0,
+        Evidence::Present(items) => Count::Known(items.len()),
+        Evidence::Missing | Evidence::Unparseable(_) => Count::Unknown,
     }
 }
 
 /// The attrition chain: how many findings this lens originally
 /// reported, how many were dropped, clamped, and suppressed, and how
-/// many survived to the verdict. `raw` is derived (dropped +
-/// survivors + suppressed) rather than stored, since it must always
-/// equal the sum of everywhere a finding could have gone.
+/// many survived. `raw` is derived (dropped + survivors + suppressed)
+/// rather than stored, and is itself unknown whenever `dropped` or
+/// `suppressed` is. `clamped` is a subset of `survivors`, not a term
+/// in that sum, so its own `?` never corrupts `raw`.
 fn render_attrition(lens: &LensReport) -> String {
-    let dropped = evidence_len(&lens.dropped);
-    let clamped = evidence_len(&lens.clamped);
-    let suppressed = evidence_len(&lens.suppressed);
+    let dropped = evidence_count(&lens.dropped);
+    let clamped = evidence_count(&lens.clamped);
+    let suppressed = evidence_count(&lens.suppressed);
     let survivors = lens.findings.len();
-    let raw = dropped + survivors + suppressed;
+    let raw = match (&dropped, &suppressed) {
+        (Count::Known(d), Count::Known(s)) => Count::Known(d + survivors + s),
+        _ => Count::Unknown,
+    };
     format!(
         "<p class=\"attrition\">{raw} raw \u{2192} {dropped} dropped \u{2192} {clamped} clamped \u{2192} {suppressed} suppressed \u{2192} {survivors} survivors</p>\n"
     )
@@ -136,7 +159,8 @@ fn render_findings(findings: &[RenderedFinding]) -> String {
         ));
         if let Some(uri) = &rf.crop_uri {
             out.push_str(&format!(
-                "<img class=\"crop\" src=\"{uri}\" alt=\"cropped frame for: {}\">\n",
+                "<img class=\"crop\" src=\"{}\" alt=\"cropped frame for: {}\">\n",
+                html_escape(uri),
                 html_escape(&f.region)
             ));
         }
@@ -358,6 +382,103 @@ mod tests {
         let html = render_lens(&lens);
         assert!(html.contains("data:image/png;base64,AAAA"));
         assert!(html.contains("kept with crop"));
+    }
+
+    #[test]
+    fn a_crop_uri_is_escaped_like_every_other_interpolated_string() {
+        // Safe today (a crop URI is always our own generated base64),
+        // but the escaping must not depend on that fact — route it
+        // through html_escape for consistency with the sheet URI and
+        // every other interpolated string, so a future non-base64
+        // source can never slip an unescaped quote or tag into `src`.
+        let mut lens = empty_lens(Lens::Breakage);
+        lens.findings = vec![RenderedFinding {
+            finding: sample_finding("kept with a hostile crop uri"),
+            crop_uri: Some("data:image/png;base64,AAA\"><script>alert(1)</script>".into()),
+        }];
+        let html = render_lens(&lens);
+        assert!(
+            !html.contains("\"><script>alert(1)</script>"),
+            "the crop uri must be escaped, not interpolated raw: {html}"
+        );
+        assert!(html.contains("&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"));
+    }
+
+    #[test]
+    fn the_attrition_chain_shows_unknown_rather_than_zero_when_dropped_is_missing() {
+        // dropped.json never persisted: the true count is unknown, and
+        // an unknown count must never render as 0 — that would make an
+        // unreadable artifact look like a healthy "found nothing"
+        // result, the exact failure this whole task exists to prevent.
+        let mut lens = empty_lens(Lens::Breakage);
+        lens.dropped = Evidence::Missing;
+        lens.clamped = Evidence::Present(vec![]);
+        lens.suppressed = Evidence::Present(vec![]);
+        lens.findings = vec![RenderedFinding {
+            finding: sample_finding("kept"),
+            crop_uri: None,
+        }];
+        let html = render_lens(&lens);
+        assert!(
+            html.contains("? raw \u{2192} ? dropped \u{2192} 0 clamped \u{2192} 0 suppressed \u{2192} 1 survivors"),
+            "an unknown dropped count must show ?, and must make raw unknown too: {html}"
+        );
+    }
+
+    #[test]
+    fn a_missing_clamped_count_reads_as_unknown_without_making_raw_unknown() {
+        // clamped is a subset of survivors, not a term in the raw sum
+        // (dropped + survivors + suppressed) — its own unreadability
+        // must still show as ?, but must not spuriously blank out an
+        // otherwise-known raw count.
+        let mut lens = empty_lens(Lens::Breakage);
+        lens.dropped = Evidence::Present(vec![]);
+        lens.clamped = Evidence::Missing;
+        lens.suppressed = Evidence::Present(vec![]);
+        lens.findings = vec![RenderedFinding {
+            finding: sample_finding("kept"),
+            crop_uri: None,
+        }];
+        let html = render_lens(&lens);
+        assert!(
+            html.contains("1 raw \u{2192} 0 dropped \u{2192} ? clamped \u{2192} 0 suppressed \u{2192} 1 survivors"),
+            "a missing clamped count shows ? without corrupting raw: {html}"
+        );
+    }
+
+    #[test]
+    fn dropped_being_unparseable_shows_the_raw_text() {
+        let mut lens = empty_lens(Lens::Breakage);
+        lens.dropped = Evidence::Unparseable("not json at all".into());
+        let html = render_lens(&lens);
+        assert!(html.contains("Dropped (no region named): present but unparseable"));
+        assert!(html.contains("not json at all"));
+    }
+
+    #[test]
+    fn clamped_being_unparseable_shows_the_raw_text() {
+        let mut lens = empty_lens(Lens::Breakage);
+        lens.clamped = Evidence::Unparseable("also not json".into());
+        let html = render_lens(&lens);
+        assert!(html.contains("Clamped: present but unparseable"));
+        assert!(html.contains("also not json"));
+    }
+
+    #[test]
+    fn suppressed_being_unparseable_shows_the_raw_text() {
+        let mut lens = empty_lens(Lens::Breakage);
+        lens.suppressed = Evidence::Unparseable("still not json".into());
+        let html = render_lens(&lens);
+        assert!(html.contains("Suppressed (overruled by a prior ruling): present but unparseable"));
+        assert!(html.contains("still not json"));
+    }
+
+    #[test]
+    fn a_missing_parsed_json_says_not_persisted() {
+        let mut lens = empty_lens(Lens::Breakage);
+        lens.parsed = Evidence::Missing;
+        let html = render_lens(&lens);
+        assert!(html.contains("findings: not persisted"));
     }
 
     #[test]
