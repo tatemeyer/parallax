@@ -34,7 +34,16 @@ pub fn resolve_frame(region: &str, frame_count: usize, cols: u32) -> Option<usiz
 
     if numbers.len() == 1 {
         let n = numbers[0];
-        return (n >= 1 && n - 1 < frame_count).then(|| n - 1);
+        let candidate = (n >= 1 && n - 1 < frame_count).then(|| n - 1)?;
+        // The explicit number is a candidate on its own, but the same
+        // text may also carry a row-and-ordinal phrase (`"frame 3, top
+        // row, first frame"`). When it does and the two disagree, the
+        // text is making two different claims about which frame it
+        // means — resolve to neither rather than silently prefer one.
+        return match resolve_row_and_ordinal(&text, frame_count, cols) {
+            Some(other) if other != candidate => None,
+            _ => Some(candidate),
+        };
     }
     if !numbers.is_empty() {
         // Named more than one distinct frame number outright: a
@@ -314,5 +323,22 @@ mod tests {
     #[test]
     fn row_and_ordinal_matching_is_case_insensitive() {
         assert_eq!(resolve_frame("TOP ROW, THIRD FRAME", 8, 3), Some(2));
+    }
+
+    #[test]
+    fn disagreeing_explicit_number_and_row_ordinal_do_not_resolve() {
+        // "frame 3" says index 2; "top row, first frame" says index 0.
+        // Two phrasings, two different answers: a confident half-truth
+        // either way it's resolved.
+        assert_eq!(resolve_frame("frame 3, top row, first frame", 8, 3), None);
+    }
+
+    #[test]
+    fn agreeing_explicit_number_and_row_ordinal_resolve() {
+        // "frame 3" and "top row, third frame" both say index 2.
+        assert_eq!(
+            resolve_frame("frame 3, top row, third frame", 8, 3),
+            Some(2)
+        );
     }
 }
