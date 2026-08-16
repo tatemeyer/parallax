@@ -1,12 +1,14 @@
-//! Renders Plumb's evidence into a human-facing report. This task
-//! contributes contact-sheet frame geometry and PNG-to-data-URI
-//! encoding (`geometry`); region-claim resolution, HTML rendering, and
-//! whole-report assembly are separate tasks in this Arc and are
-//! deliberately not anticipated here.
+//! Renders Plumb's evidence into a human-facing report. So far this
+//! Arc contributes contact-sheet frame geometry and PNG-to-data-URI
+//! encoding (`geometry`) and conservative region-to-frame resolution
+//! (`region`); HTML rendering and whole-report assembly are separate
+//! tasks in this Arc and are deliberately not anticipated here.
 
 pub mod geometry;
+pub mod region;
 
 pub use geometry::{crop_png_data_uri, frame_rect, png_data_uri, FrameRect};
+pub use region::resolve_frame;
 
 use std::path::PathBuf;
 
