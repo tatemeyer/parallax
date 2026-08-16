@@ -91,7 +91,7 @@ pub struct Finding {
 
 /// A finding whose severity exceeded its lens's ceiling, with the
 /// severity it was lowered from.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ClampRecord {
     /// The finding as it survived, already clamped to the ceiling.
     pub finding: Finding,
@@ -100,7 +100,7 @@ pub struct ClampRecord {
 }
 
 /// The result of ingesting one lens's report, with what was discarded.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedFindings {
     /// Findings that survived enforcement.
     pub kept: Vec<Finding>,
