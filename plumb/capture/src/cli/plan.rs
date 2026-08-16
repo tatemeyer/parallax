@@ -6,6 +6,7 @@
 //! empty override map until a later task wires that flag in.
 
 use super::IoFailure;
+use parallax_plumb::evidence::{self, EvidenceError};
 use parallax_plumb::finding::Lens;
 use parallax_plumb::manifest::{self, RunManifest};
 use parallax_plumb::prompt::{self, Dispatch, DispatchPlan, Skip};
@@ -21,6 +22,8 @@ pub(super) enum PlanCliError {
     Io(IoFailure),
     /// A manifest in the run directory failed to read or parse.
     Manifest(manifest::ManifestError),
+    /// A dispatched prompt could not be persisted as evidence.
+    Evidence(EvidenceError),
 }
 
 impl std::fmt::Display for PlanCliError {
@@ -28,6 +31,7 @@ impl std::fmt::Display for PlanCliError {
         match self {
             PlanCliError::Io(e) => write!(f, "{e}"),
             PlanCliError::Manifest(e) => write!(f, "{e}"),
+            PlanCliError::Evidence(e) => write!(f, "{e}"),
         }
     }
 }
@@ -157,12 +161,25 @@ pub(super) fn run_plan(
         })
         .transpose()?;
     let overrides: HashMap<String, String> = HashMap::new();
-    Ok(prompt::plan_dispatch(
-        &manifests,
-        taste_text.as_deref(),
-        &overrides,
-        cap,
-    ))
+    let plan = prompt::plan_dispatch(&manifests, taste_text.as_deref(), &overrides, cap);
+
+    // Persisted only after `build_prompt` (inside `plan_dispatch`) has
+    // already returned, and never read back here — evidence must never
+    // become a channel back into a prompt.
+    for batch in &plan.batches {
+        for d in batch {
+            persist_prompt(run_dir, d)?;
+        }
+    }
+
+    Ok(plan)
+}
+
+/// Writes one dispatch's already-built prompt to the run's evidence
+/// directory, mapping any failure into [`PlanCliError`] so the message
+/// still names the file that could not be written.
+fn persist_prompt(run_dir: &Path, d: &Dispatch) -> Result<(), PlanCliError> {
+    evidence::write_prompt(run_dir, d.lens, &d.scenario, &d.prompt).map_err(PlanCliError::Evidence)
 }
 
 /// Serializes a `DispatchPlan` to pretty JSON for the skill to consume.
@@ -259,6 +276,26 @@ mod tests {
     /// single-frame, no-intent, no-taste manifest skips all three
     /// non-breakage lenses for three different reasons, which pins all
     /// six strings at once.
+    /// Task 3: `run_plan` must persist each dispatched prompt verbatim
+    /// to `lenses/<lens>.<scenario>/prompt.txt`, so a human auditing a
+    /// verdict later can see exactly what a lens agent was told. The
+    /// brief's sample used a `write_test_manifest` helper that does not
+    /// exist in this module; this module's existing tests stage a
+    /// manifest via `sample_manifest` + `write_manifest` instead, so
+    /// this test uses that pair, keeping the assertion identical.
+    #[test]
+    fn planning_persists_each_dispatched_prompt_verbatim() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run = tmp.path();
+        write_manifest(&sample_manifest("omni", Some("spins"), 6), run).unwrap();
+
+        run_plan(run, None, 8).expect("plan succeeds");
+
+        let p = std::fs::read_to_string(run.join("lenses/breakage.omni/prompt.txt"))
+            .expect("prompt persisted");
+        assert!(p.contains("Sim Sup"), "prompt body was written verbatim");
+    }
+
     #[test]
     fn render_plan_json_names_every_non_breakage_lens_and_its_own_skip_reason() {
         let tmp = tempfile::tempdir().unwrap();
