@@ -10,6 +10,7 @@ pub mod color;
 pub mod config;
 pub mod contact;
 pub mod encode;
+pub mod evidence;
 pub mod finding;
 pub mod glyph;
 pub mod keys;

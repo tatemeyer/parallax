@@ -91,7 +91,7 @@ pub struct Finding {
 
 /// A finding whose severity exceeded its lens's ceiling, with the
 /// severity it was lowered from.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClampRecord {
     /// The finding as it survived, already clamped to the ceiling.
     pub finding: Finding,
