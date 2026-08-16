@@ -140,7 +140,7 @@ fn a_dropped_finding_keeps_its_text_not_just_a_count() {
       {"lens":"breakage","scenario":"s","severity":"major","region":"top row",
        "claim":"kept","evidence":"e","confidence":"high"}
     ]"#;
-    let p = parse_findings(raw, Lens::Breakage, "s").expect("parses");
+    let p = parse_findings(Lens::Breakage, "s", raw).expect("parses");
     assert_eq!(p.kept.len(), 1);
     assert_eq!(p.dropped_no_region, 1);
     assert_eq!(p.dropped.len(), 1);
@@ -153,7 +153,7 @@ fn a_clamped_finding_records_the_severity_it_came_from() {
       {"lens":"design","scenario":"s","severity":"blocker","region":"panel",
        "claim":"over-severe","evidence":"e","confidence":"low"}
     ]"#;
-    let p = parse_findings(raw, Lens::Design, "s").expect("parses");
+    let p = parse_findings(Lens::Design, "s", raw).expect("parses");
     assert_eq!(p.kept[0].severity, Severity::Major);
     assert_eq!(p.clamped, 1);
     assert_eq!(p.clamped_records.len(), 1);
@@ -174,7 +174,7 @@ In `finding.rs`, add above `ParsedFindings`:
 ```rust
 /// A finding whose severity exceeded its lens's ceiling, with the
 /// severity it was lowered from.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ClampRecord {
     /// The finding as it survived, already clamped to the ceiling.
     pub finding: Finding,
