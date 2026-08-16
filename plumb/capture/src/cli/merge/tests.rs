@@ -176,6 +176,86 @@ fn merge_rejects_a_malformed_expected_arg() {
     assert!(matches!(err, MergeCliError::Usage(_)));
 }
 
+// --- evidence persistence (Task 4) ------------------------------
+
+#[test]
+fn merging_persists_the_raw_reply_and_the_discarded_findings() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let run = tmp.path();
+    let body = r#"[
+      {"lens":"breakage","scenario":"omni","severity":"major","region":"",
+       "claim":"dropped for no region","evidence":"e","confidence":"high"}
+    ]"#;
+    let f = tmp.path().join("rep.json");
+    std::fs::write(&f, body).expect("write report");
+
+    run_merge(
+        run,
+        &[format!("breakage:omni:{}", f.display())],
+        &[],
+        &[],
+        None,
+        None,
+    )
+    .expect("merge succeeds");
+
+    let raw = std::fs::read_to_string(run.join("lenses/breakage.omni/reply.1.raw.txt"))
+        .expect("reply persisted");
+    assert!(raw.contains("dropped for no region"));
+
+    let dropped = std::fs::read_to_string(run.join("lenses/breakage.omni/dropped.json"))
+        .expect("dropped persisted");
+    assert!(
+        dropped.contains("dropped for no region"),
+        "the discarded finding keeps its text"
+    );
+}
+
+#[test]
+fn a_fourth_report_field_records_the_retry_attempt() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let run = tmp.path();
+    let f = tmp.path().join("rep.json");
+    std::fs::write(&f, "[]").expect("write report");
+
+    run_merge(
+        run,
+        &[format!("breakage:omni:{}:2", f.display())],
+        &[],
+        &[],
+        None,
+        None,
+    )
+    .expect("merge succeeds");
+
+    assert!(
+        run.join("lenses/breakage.omni/reply.2.raw.txt").exists(),
+        "attempt number came from the fourth field"
+    );
+}
+
+/// The hazard this task was warned about: `--report` is parsed with
+/// `splitn(3, ':')` so the file path is everything after the second
+/// colon, which is exactly why an absolute Windows path (its own
+/// drive-letter colon included) survives untouched today. A naive
+/// `splitn(4, ':')` to add the attempt field would instead split the
+/// drive letter off — `"C:\tmp\rep.json"` would become path `"C"` and
+/// attempt `"\tmp\rep.json"`. This test pins both shapes: a bare
+/// Windows-style path (no attempt suffix) must parse with the whole
+/// string as the path, and the same path with a trailing `:2` must
+/// parse with attempt 2 and the drive letter still attached to the path.
+#[test]
+fn a_windows_style_path_survives_with_and_without_a_trailing_attempt() {
+    let bare = parse_report_arg("breakage:omni:C:\\tmp\\rep.json").expect("bare path parses");
+    assert_eq!(bare.path, PathBuf::from("C:\\tmp\\rep.json"));
+    assert_eq!(bare.attempt, 1);
+
+    let with_attempt =
+        parse_report_arg("breakage:omni:C:\\tmp\\rep.json:2").expect("path with attempt parses");
+    assert_eq!(with_attempt.path, PathBuf::from("C:\\tmp\\rep.json"));
+    assert_eq!(with_attempt.attempt, 2);
+}
+
 // --- ruling round trip (Task 17 / Arc 4) -----------------------
 //
 // The brief's own Step 4 asks for this verified by hand against a

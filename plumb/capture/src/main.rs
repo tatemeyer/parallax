@@ -72,7 +72,9 @@ enum Command {
         /// Directory to write `verdict.md` into.
         #[arg(long)]
         run_dir: PathBuf,
-        /// One `lens:scenario:file` triple per lens report to ingest.
+        /// One `lens:scenario:file` triple per lens report to ingest, or
+        /// `lens:scenario:file:attempt` when this is a retry; a missing
+        /// attempt defaults to `1`.
         #[arg(long)]
         report: Vec<String>,
         /// One `lens:scenario` pair per lens dispatched for this run;

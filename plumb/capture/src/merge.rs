@@ -4,6 +4,7 @@
 //! same observation, raised again by a second lens, dodge a ruling
 //! already made against the first.
 
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::finding::{Finding, Lens};
@@ -42,7 +43,7 @@ pub fn fingerprint(scenario: &str, region: &str, claim: &str) -> String {
 /// raised the same fingerprint. Nothing is discarded: a duplicate's
 /// only trace of having been dropped as a standalone finding is that
 /// its lens now appears here instead of owning its own `MergedFinding`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergedFinding {
     /// The most severe of the duplicate reports; ties go to a
     /// blocker-capable lens so a suppressible advisory report never

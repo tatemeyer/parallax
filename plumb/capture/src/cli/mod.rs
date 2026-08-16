@@ -162,10 +162,23 @@ pub(crate) fn dispatch(command: Command) -> i32 {
                 eprintln!("HOLD: merge could not run: {e}");
                 2
             }
+            // `merge/suppressed.json` or `merge/survivors.json` failed
+            // to encode: same class of failure as an unwritable
+            // verdict.md — merge never finished.
+            Err(e @ merge::MergeCliError::Json(_)) => {
+                eprintln!("HOLD: merge could not run: {e}");
+                2
+            }
             // `--rulings` named a file that exists but is not valid
             // ruling history: merge never got to finish, same class of
             // failure as an unreadable report.
             Err(e @ merge::MergeCliError::Ruling(_)) => {
+                eprintln!("HOLD: merge could not run: {e}");
+                2
+            }
+            // A reply, a lens's parsed findings, or run.json could not
+            // be persisted as evidence: merge never got to finish.
+            Err(e @ merge::MergeCliError::Evidence(_)) => {
                 eprintln!("HOLD: merge could not run: {e}");
                 2
             }
