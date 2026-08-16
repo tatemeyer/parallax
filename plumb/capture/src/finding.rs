@@ -89,8 +89,18 @@ pub struct Finding {
     pub confidence: Confidence,
 }
 
+/// A finding whose severity exceeded its lens's ceiling, with the
+/// severity it was lowered from.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ClampRecord {
+    /// The finding as it survived, already clamped to the ceiling.
+    pub finding: Finding,
+    /// The severity the lens originally asserted.
+    pub from: Severity,
+}
+
 /// The result of ingesting one lens's report, with what was discarded.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ParsedFindings {
     /// Findings that survived enforcement.
     pub kept: Vec<Finding>,
@@ -98,6 +108,11 @@ pub struct ParsedFindings {
     pub dropped_no_region: usize,
     /// How many had their severity clamped to the lens's ceiling.
     pub clamped: usize,
+    /// Findings discarded for naming no region, retained in full so a
+    /// reader can judge whether the drop was correct.
+    pub dropped: Vec<Finding>,
+    /// Findings whose severity was lowered to their lens's ceiling.
+    pub clamped_records: Vec<ClampRecord>,
 }
 
 /// A lens report that could not be read as the finding schema.
@@ -140,16 +155,24 @@ pub fn parse_findings(
     let mut kept = Vec::new();
     let mut dropped_no_region = 0;
     let mut clamped = 0;
+    let mut dropped = Vec::new();
+    let mut clamped_records = Vec::new();
     for mut f in raw {
         if f.region.trim().is_empty() {
             dropped_no_region += 1;
+            dropped.push(f);
             continue;
         }
         f.lens = lens;
         f.scenario = scenario.to_string();
         if f.severity > ceiling {
+            let from = f.severity;
             f.severity = ceiling;
             clamped += 1;
+            clamped_records.push(ClampRecord {
+                finding: f.clone(),
+                from,
+            });
         }
         kept.push(f);
     }
@@ -157,6 +180,8 @@ pub fn parse_findings(
         kept,
         dropped_no_region,
         clamped,
+        dropped,
+        clamped_records,
     })
 }
 
@@ -259,5 +284,34 @@ mod tests {
         assert!(Lens::Intent.is_blocker_capable());
         assert!(!Lens::Design.is_blocker_capable());
         assert!(!Lens::Motion.is_blocker_capable());
+    }
+
+    #[test]
+    fn a_dropped_finding_keeps_its_text_not_just_a_count() {
+        let raw = r#"[
+          {"lens":"breakage","scenario":"s","severity":"major","region":"",
+           "claim":"the left gutter is doubled","evidence":"e","confidence":"high"},
+          {"lens":"breakage","scenario":"s","severity":"major","region":"top row",
+           "claim":"kept","evidence":"e","confidence":"high"}
+        ]"#;
+        let p = parse_findings(Lens::Breakage, "s", raw).expect("parses");
+        assert_eq!(p.kept.len(), 1);
+        assert_eq!(p.dropped_no_region, 1);
+        assert_eq!(p.dropped.len(), 1);
+        assert_eq!(p.dropped[0].claim, "the left gutter is doubled");
+    }
+
+    #[test]
+    fn a_clamped_finding_records_the_severity_it_came_from() {
+        let raw = r#"[
+          {"lens":"design","scenario":"s","severity":"blocker","region":"panel",
+           "claim":"over-severe","evidence":"e","confidence":"low"}
+        ]"#;
+        let p = parse_findings(Lens::Design, "s", raw).expect("parses");
+        assert_eq!(p.kept[0].severity, Severity::Major);
+        assert_eq!(p.clamped, 1);
+        assert_eq!(p.clamped_records.len(), 1);
+        assert_eq!(p.clamped_records[0].from, Severity::Blocker);
+        assert_eq!(p.clamped_records[0].finding.severity, Severity::Major);
     }
 }
