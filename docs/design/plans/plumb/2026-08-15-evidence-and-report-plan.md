@@ -501,9 +501,22 @@ Expected: FAIL — files not found; four-field parse rejected.
 
 - [ ] **Step 3: Implement**
 
-- Extend `parse_report_arg` to accept an optional fourth
-  colon-separated field parsed as `u32`, defaulting to `1`. Reject a
-  non-numeric fourth field with an actionable error naming the argument.
+- Extend `parse_report_arg` to accept an optional trailing attempt.
+  **Corrected 2026-08-16 — the original text here was wrong and
+  self-contradictory.** It said to split a fourth colon-separated field
+  and "reject a non-numeric fourth field", which cannot work: the third
+  field is deliberately *everything after the second colon* so that a
+  Windows path survives (`breakage:omni:C:	mpep.json`). Splitting a
+  fourth field on `:` takes the drive letter as the path, and rejecting
+  a non-numeric fourth field then rejects every absolute Windows path.
+
+  The correct algorithm: `splitn(3, ':')` for lens/scenario/remainder,
+  then `rsplit_once(':')` on the remainder and treat the suffix as the
+  attempt **only if it parses as a `u32`** and the prefix is non-empty.
+  Otherwise the whole remainder is the path and the attempt is `1`.
+  There is no rejection case — a non-numeric suffix simply means the
+  colon belonged to the path. A colon is illegal in Windows filenames
+  outside a drive letter, so a numeric right-hand suffix is unambiguous.
 - After reading each report file, call `evidence::write_reply` with its
   raw text and attempt.
 - After `parse_findings`, call `evidence::write_findings`.
