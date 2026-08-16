@@ -238,7 +238,39 @@ dropped_no_region and clamped is untouched."
   - `pub fn write_findings(run_dir: &Path, lens: Lens, scenario: &str, parsed: &ParsedFindings) -> Result<(), EvidenceError>`
   - `pub fn write_run_json(run_dir: &Path, run_id: &str) -> Result<(), EvidenceError>`
   - `pub fn read_lens_evidence(run_dir: &Path, lens: Lens, scenario: &str) -> LensEvidence`
-  - `pub struct LensEvidence { pub prompt: Option<String>, pub replies: Vec<(u32, String)>, pub parsed: Option<Vec<Finding>>, pub dropped: Option<Vec<Finding>>, pub clamped: Option<Vec<ClampRecord>> }`
+  - ```rust
+    /// One artifact's three possible states, kept distinct because
+    /// "nothing was recorded" and "something was recorded that could
+    /// not be read" are different facts about a run, and an audit tool
+    /// that conflates them is lying by omission.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Evidence<T> {
+        /// The artifact was never written.
+        Missing,
+        /// The artifact exists but could not be parsed; carries its
+        /// raw text so the report can show it rather than drop it.
+        Unparseable(String),
+        /// The artifact was read successfully.
+        Present(T),
+    }
+
+    pub struct LensEvidence {
+        pub prompt: Evidence<String>,
+        pub replies: Vec<(u32, String)>,
+        pub parsed: Evidence<Vec<Finding>>,
+        pub dropped: Evidence<Vec<Finding>>,
+        pub clamped: Evidence<Vec<ClampRecord>>,
+    }
+    ```
+
+    **Corrected 2026-08-16, after Task 2's review.** This originally
+    pinned every field as an `Option`, which cannot hold a third state
+    — so a corrupt `parsed.json` became `None`, indistinguishable from
+    an absent one. That is the spec's own "absence reads as success"
+    failure reappearing one level down, inside the design written to
+    prevent it. The spec was right; these types were wrong.
+    `replies` stays a plain `Vec` because a reply is raw text decoded
+    lossily and therefore always readable.
   - `pub struct RunJson { pub contract_version: u32, pub run_id: String }`
   - `pub enum EvidenceError { Io(IoFailure), Json(JsonFailure) }`
 
@@ -719,7 +751,15 @@ everything and references no external resource."
   `region::resolve_frame`.
 - Produces: `pub fn build_run_report(run_dir: &Path) -> RunReport`, and
   `pub struct ScenarioReport { pub scenario: String, pub sheet_uri: Option<String>, pub frame_count: usize, pub lenses: Vec<LensReport> }`,
-  `pub struct LensReport { pub lens: Lens, pub findings: Vec<RenderedFinding>, pub dropped: Vec<Finding>, pub clamped: Vec<ClampRecord>, pub prompt: Option<String>, pub replies: Vec<(u32, String)> }`,
+  `pub struct LensReport { pub lens: Lens, pub findings: Vec<RenderedFinding>, pub dropped: Evidence<Vec<Finding>>, pub clamped: Evidence<Vec<ClampRecord>>, pub prompt: Evidence<String>, pub replies: Vec<(u32, String)> }`,
+
+  **Note the `Evidence<T>` fields (corrected 2026-08-16).** Task 8 must
+  render all three states distinctly: `Missing` → *"not persisted"*,
+  `Unparseable(raw)` → *"present but unparseable"* **with the raw text
+  shown**, `Present(v)` → the findings. Collapsing `Unparseable` into
+  `Missing` would drop content the run actually recorded, which is the
+  one thing this report exists to stop.
+
   and
 
   ```rust
