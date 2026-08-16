@@ -4384,10 +4384,31 @@ decision says to.** The order front-loads what is cheap and unblocked:
    that guards the widest widget surface.
 4. `omnitrix` second screen (boot or upgrade) — the first proof that
    one example warrants more than one scenario.
-5. `launcher` — **gated on Arc 5.** Its portal/nexus decorative
-   geometry and starfield `✦` hard-error until `substitute` mode
-   exists. Declare `on_unmapped_glyph: substitute` when it lands.
-6. `smash_crabs` — **gated on Arc 5**, same reason (`💥`).
+5. `launcher` — **needs `adapter: pty`.** Its portal/nexus decorative
+   geometry and starfield `✦` hard-error unless `on_unmapped_glyph:
+   substitute` is declared. **Corrected 2026-08-15:** see below — that
+   setting requires the `pty` adapter, not `command`.
+6. `smash_crabs` — **not gated after all.** **Corrected 2026-08-15:**
+   its `💥` is confined to a ~600ms Target Smash window, so a hub-screen
+   scenario never renders it and needs no substitution at all.
+
+> **Two corrections to this Arc, from Task 23's calibration checkpoint
+> (2026-08-15).** Both were found by reading source rather than by
+> running anything, and both would have produced scenarios that cannot
+> work if followed as originally written.
+>
+> **`on_unmapped_glyph: substitute` does not exist in
+> `tools/visual-snapshot` at all.** It is implemented only in Plumb's
+> own `pty` adapter (Task 20). Since TTUI adopts Plumb through the
+> `command` adapter — pointed at `visual-snapshot`, which stays
+> unmodified by design — **any scenario needing substitution must
+> declare `adapter: pty` instead.** The original text told an author to
+> declare a config field that the adapter they were using would ignore,
+> and the failure would have looked like an ordinary hard-error.
+>
+> **`smash_crabs` was never gated.** Its `💥` appears only inside a
+> ~600ms Target Smash window; a hub-screen capture never reaches it.
+> It belongs in the cheap class, not the blocked one.
 
 For each: write the script, capture it, `Read` the result, iterate the
 timing until the frame is worth reviewing, write the `intent`, declare
