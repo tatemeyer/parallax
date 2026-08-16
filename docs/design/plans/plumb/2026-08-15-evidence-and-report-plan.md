@@ -506,7 +506,8 @@ Expected: FAIL — files not found; four-field parse rejected.
   self-contradictory.** It said to split a fourth colon-separated field
   and "reject a non-numeric fourth field", which cannot work: the third
   field is deliberately *everything after the second colon* so that a
-  Windows path survives (`breakage:omni:C:	mpep.json`). Splitting a
+  Windows path survives (`breakage:omni:C:	mp
+ep.json`). Splitting a
   fourth field on `:` takes the drive letter as the path, and rejecting
   a non-numeric fourth field then rejects every absolute Windows path.
 
@@ -548,7 +549,13 @@ materially different story from 'it held'."
 
 **Files:**
 - Modify: `plumb/capture/src/contact.rs` (expose geometry)
+- Modify: `plumb/capture/Cargo.toml` (add `base64 = "0.22"`)
 - Create: `plumb/capture/src/report/geometry.rs`
+
+> **Corrected 2026-08-16.** The `base64` dependency was originally listed
+> under Task 7, but this task produces `crop_png_data_uri` and
+> `png_data_uri`, which cannot compile without it. It belongs here, where
+> it is first needed. Task 7 adds no dependency.
 - Modify: `plumb/capture/src/lib.rs` (add `pub mod report;`)
 - Create: `plumb/capture/src/report/mod.rs` (declaring the submodules)
 
@@ -710,7 +717,7 @@ erring toward a crop costs the reader's trust in every crop after it."
 
 **Files:**
 - Create: `plumb/capture/src/report/render.rs`
-- Modify: `plumb/capture/Cargo.toml` (add `base64 = "0.22"`)
+  (`base64` was already added in Task 5, where it is first needed)
 
 **Interfaces:**
 - Produces: `pub fn render_report(run: &RunReport) -> String` and
