@@ -178,46 +178,95 @@ pub fn write_run_json(run_dir: &Path, run_id: &str) -> Result<(), EvidenceError>
     )
 }
 
+/// One artifact's three possible states, kept distinct because
+/// "nothing was recorded" and "something was recorded that could not
+/// be read" are different facts about a run, and an audit tool that
+/// conflates them is lying by omission — the exact failure this whole
+/// module exists to prevent, one level down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Evidence<T> {
+    /// The artifact was never written.
+    Missing,
+    /// The artifact exists but could not be parsed; carries its raw
+    /// text so a report can show it rather than drop it.
+    Unparseable(String),
+    /// The artifact was read and parsed successfully.
+    Present(T),
+}
+
+impl<T> Default for Evidence<T> {
+    /// Absence is the default state — matches an evidence directory
+    /// that was never written.
+    fn default() -> Self {
+        Evidence::Missing
+    }
+}
+
 /// Everything persisted for one lens dispatched against one scenario,
-/// as actually found on disk. A missing artifact is a `None`/empty
-/// field, never an error — a report renders it as an explicit marker
-/// ("not persisted"), not a lens that silently said nothing.
+/// as actually found on disk. A missing artifact is [`Evidence::Missing`],
+/// never an error — a report renders it as an explicit marker ("not
+/// persisted"), not a lens that silently said nothing. A present but
+/// corrupt artifact is [`Evidence::Unparseable`], carrying its raw text
+/// — a report renders that as "present but unparseable, with the raw
+/// bytes still linked," never silently dropped and never conflated
+/// with absence.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LensEvidence {
     /// The prompt the lens read, if `prompt.txt` was persisted.
-    pub prompt: Option<String>,
+    pub prompt: Evidence<String>,
     /// Every raw reply the lens returned, as `(attempt, text)`, sorted
-    /// ascending by attempt so a retry sequence reads in order.
+    /// ascending by attempt so a retry sequence reads in order. Always
+    /// a plain `Vec`: a reply is decoded lossily as raw text, so it is
+    /// always readable once the file itself is found.
     pub replies: Vec<(u32, String)>,
     /// Findings that survived enforcement, if `parsed.json` was persisted.
-    pub parsed: Option<Vec<Finding>>,
+    pub parsed: Evidence<Vec<Finding>>,
     /// Findings dropped for naming no region, if `dropped.json` was
     /// persisted.
-    pub dropped: Option<Vec<Finding>>,
+    pub dropped: Evidence<Vec<Finding>>,
     /// Findings whose severity was clamped, if `clamped.json` was
     /// persisted.
-    pub clamped: Option<Vec<ClampRecord>>,
+    pub clamped: Evidence<Vec<ClampRecord>>,
 }
 
 /// Reads a text file as UTF-8, substituting the replacement character
 /// for any invalid byte rather than failing — so a present-but-oddly-
 /// encoded file still surfaces its content instead of reading as
-/// "not persisted". Returns `None` only when the file itself could not
-/// be read (most commonly: it does not exist).
+/// "not persisted". [`Evidence::Missing`] only when the file itself
+/// could not be read (most commonly: it does not exist); a plain text
+/// file has no schema to fail against, so it never yields
+/// [`Evidence::Unparseable`].
+fn read_evidence_text(path: &Path) -> Evidence<String> {
+    match std::fs::read(path) {
+        Ok(bytes) => Evidence::Present(String::from_utf8_lossy(&bytes).into_owned()),
+        Err(_) => Evidence::Missing,
+    }
+}
+
+/// Reads a text file, tolerating invalid UTF-8 the same way as
+/// [`read_evidence_text`]. `None` only when the file could not be read.
 fn read_text_lossy(path: &Path) -> Option<String> {
     std::fs::read(path)
         .ok()
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Reads and parses a JSON file. Returns `None` when the file is
-/// missing, unreadable, or not valid JSON for `T` — this module's
-/// pinned struct shape (`Option<Vec<Finding>>` / `Option<Vec<ClampRecord>>`)
-/// has no variant that can carry raw bytes instead, so an unparseable
-/// file collapses into the same "not persisted" marker as an absent one.
-fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
-    let text = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&text).ok()
+/// Reads and parses a JSON file into the three-state [`Evidence`]:
+/// [`Evidence::Missing`] when the file could not be read at all,
+/// [`Evidence::Unparseable`] carrying the raw text when it was read but
+/// did not parse as `T`, [`Evidence::Present`] on success. This is the
+/// fix for the gap the `Option`-typed shape could not express: a
+/// corrupt `parsed.json` must not collapse into the same marker as an
+/// absent one.
+fn read_evidence_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Evidence<T> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(_) => return Evidence::Missing,
+    };
+    match serde_json::from_str(&text) {
+        Ok(value) => Evidence::Present(value),
+        Err(_) => Evidence::Unparseable(text),
+    }
 }
 
 /// Parses the attempt number out of a `reply.<attempt>.raw.txt`
@@ -237,7 +286,7 @@ fn parse_reply_attempt(file_name: &str) -> Option<u32> {
 pub fn read_lens_evidence(run_dir: &Path, lens: Lens, scenario: &str) -> LensEvidence {
     let dir = lens_dir(run_dir, lens, scenario);
 
-    let prompt = read_text_lossy(&dir.join("prompt.txt"));
+    let prompt = read_evidence_text(&dir.join("prompt.txt"));
 
     let mut replies: Vec<(u32, String)> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -256,9 +305,9 @@ pub fn read_lens_evidence(run_dir: &Path, lens: Lens, scenario: &str) -> LensEvi
     LensEvidence {
         prompt,
         replies,
-        parsed: read_json(&dir.join("parsed.json")),
-        dropped: read_json(&dir.join("dropped.json")),
-        clamped: read_json(&dir.join("clamped.json")),
+        parsed: read_evidence_json(&dir.join("parsed.json")),
+        dropped: read_evidence_json(&dir.join("dropped.json")),
+        clamped: read_evidence_json(&dir.join("clamped.json")),
     }
 }
 
@@ -275,19 +324,40 @@ mod tests {
         write_reply(run, Lens::Breakage, "omni", 2, "[]").expect("r2");
 
         let ev = read_lens_evidence(run, Lens::Breakage, "omni");
-        assert_eq!(ev.prompt.as_deref(), Some("PROMPT BODY"));
+        assert_eq!(ev.prompt, Evidence::Present("PROMPT BODY".to_string()));
         assert_eq!(ev.replies.len(), 2);
         assert_eq!(ev.replies[0], (1, "garbled".to_string()));
         assert_eq!(ev.replies[1], (2, "[]".to_string()));
     }
 
     #[test]
-    fn absent_evidence_is_none_not_an_error() {
+    fn absent_evidence_is_missing_not_an_error() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let ev = read_lens_evidence(tmp.path(), Lens::Motion, "nothing-here");
-        assert!(ev.prompt.is_none());
+        assert_eq!(ev.prompt, Evidence::Missing);
         assert!(ev.replies.is_empty());
-        assert!(ev.parsed.is_none());
+        assert_eq!(ev.parsed, Evidence::Missing);
+        assert_eq!(ev.dropped, Evidence::Missing);
+        assert_eq!(ev.clamped, Evidence::Missing);
+    }
+
+    /// The spec's central requirement for this correction: a present
+    /// but corrupt artifact must render as "present but unparseable,
+    /// with the raw bytes still linked" — never quietly dropped into
+    /// the same marker as an absent one.
+    #[test]
+    fn a_corrupt_findings_file_is_unparseable_and_carries_its_raw_text() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let run = tmp.path();
+        let dir = lens_dir(run, Lens::Breakage, "omni");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("parsed.json"), "not json at all").expect("write corrupt");
+
+        let ev = read_lens_evidence(run, Lens::Breakage, "omni");
+        match ev.parsed {
+            Evidence::Unparseable(raw) => assert_eq!(raw, "not json at all"),
+            other => panic!("expected Unparseable carrying the raw text, got {other:?}"),
+        }
     }
 
     #[test]
@@ -336,9 +406,9 @@ mod tests {
         write_findings(run, Lens::Design, "omni", &parsed).expect("write_findings");
 
         let ev = read_lens_evidence(run, Lens::Design, "omni");
-        assert_eq!(ev.parsed, Some(Vec::new()));
-        assert_eq!(ev.dropped, Some(Vec::new()));
-        assert_eq!(ev.clamped, Some(Vec::new()));
+        assert_eq!(ev.parsed, Evidence::Present(Vec::new()));
+        assert_eq!(ev.dropped, Evidence::Present(Vec::new()));
+        assert_eq!(ev.clamped, Evidence::Present(Vec::new()));
     }
 
     /// A retried lens's replies must come back oldest-attempt-first
