@@ -273,6 +273,33 @@ fn a_disclosed_caveat_reaches_every_lens() {
     }
 }
 
+/// ttui#139: the first pane of a contact sheet is captured at process
+/// start, before any scripted step has run. For an app that opens on a
+/// fade-in it is legitimately near-blank, and a lens reported exactly
+/// that as a blocker. Every lens must be told the pane predates the
+/// scenario rather than judging it as a dead frame.
+#[test]
+fn the_pre_script_frame_is_disclosed_to_every_lens() {
+    let mut manifest = m(6, Some("the dial rotates"), vec![]);
+    manifest.caveats = vec![Caveat::PreScriptFrame];
+    for lens in [Lens::Breakage, Lens::Intent, Lens::Design, Lens::Motion] {
+        let p = build_prompt(&LensInputs {
+            lens,
+            manifest: &manifest,
+            taste: Some("t"),
+            taste_override: None,
+        });
+        assert!(
+            p.contains("before any scripted step"),
+            "{lens:?} must be told the first pane predates the script"
+        );
+        assert!(
+            p.contains("do not judge"),
+            "{lens:?} must be told not to judge it"
+        );
+    }
+}
+
 /// Task 20: confirms `a_disclosed_caveat_reaches_every_lens` (above)
 /// still holds when the `Caveat` comes from a *real* substituted
 /// capture — real pixel data through `render::render_screen` in

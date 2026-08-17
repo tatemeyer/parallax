@@ -6,7 +6,7 @@
 use super::{frame_count, substitute_out, CaptureError};
 use crate::config::Scenario;
 use crate::contact::write_contact_sheet;
-use crate::manifest::RunManifest;
+use crate::manifest::{Caveat, RunManifest};
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -91,7 +91,13 @@ pub fn capture_command(
                 size: None,
                 intent: scenario.intent.clone(),
                 expects: scenario.expects.clone(),
-                caveats: Vec::new(),
+                // A multi-frame capture's first pane predates every
+                // scripted step, so disclose it. See `Caveat::PreScriptFrame`.
+                caveats: if frames >= 2 {
+                    vec![Caveat::PreScriptFrame]
+                } else {
+                    Vec::new()
+                },
             })
         }
         _ => Err(CaptureError::AmbiguousOutput(produced)),

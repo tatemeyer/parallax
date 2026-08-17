@@ -258,7 +258,7 @@ fn capture_pty(
         (captured, None)
     };
 
-    let caveats = captured_frames
+    let mut caveats: Vec<Caveat> = captured_frames
         .substitutions
         .iter()
         .map(|&(ch, count)| Caveat::UnmappedGlyphSubstituted {
@@ -266,6 +266,11 @@ fn capture_pty(
             count,
         })
         .collect();
+    // A multi-frame capture's first pane predates every scripted step,
+    // so disclose it. See `Caveat::PreScriptFrame`.
+    if frame_count >= 2 {
+        caveats.push(Caveat::PreScriptFrame);
+    }
 
     Ok(RunManifest {
         run_id: run_id.to_string(),
