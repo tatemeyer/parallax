@@ -925,7 +925,7 @@ fn no_evidence_type_or_path_reaches_prompt_construction() {
         // base", and the Finding schema's own `evidence` field (what a
         // lens cites FROM THE IMAGE) appears in every lens prompt by
         // design. Match a real module-path reference instead.
-        for needle in ["evidence::", "read_lens_evidence", "LensEvidence"] {
+        for needle in ["evidence::", "Evidence", "read_lens_evidence", "reply.raw"] {
             assert!(!src.contains(needle),
                 "{f} must not reference {needle}: persisting evidence must \
                  never become a channel into a prompt");
