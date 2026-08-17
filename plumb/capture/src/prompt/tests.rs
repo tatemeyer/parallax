@@ -544,6 +544,64 @@ fn every_lens_states_its_own_severity_ceiling() {
     }
 }
 
+// --- guards evidence out of prompt construction ---------------------
+
+/// Mirrors `rulings::tests::prompt_construction_never_references_rulings_or_suppression`
+/// for the evidence layer this plan added: if `prompt/`'s own source
+/// ever grew a reference to the evidence module, its `Evidence` type,
+/// `read_lens_evidence`, or a raw-reply field, this test fails before a
+/// lens could ever be shown a previous run's findings or its own prior
+/// reply — the exact channel `evidence.rs`'s own module doc says must
+/// never open ("this module deliberately never reads from or writes
+/// into `prompt/`").
+///
+/// Unlike the rulings guard it mirrors (a hardcoded two-file list), this
+/// walks `src/prompt/`'s own directory at test time, skipping only this
+/// file — a future `prompt/other.rs` is covered automatically, without
+/// anyone remembering to add it to a list. The final count assertion
+/// exists so a directory-listing mistake (wrong path, everything
+/// skipped) fails loudly instead of passing vacuously.
+///
+/// The needle list deliberately does not include the bare word
+/// `"evidence"`: it false-positives on this crate's own prose (`"entire
+/// evidence base"` in `text.rs`) and on the lens reply schema's
+/// `"evidence"` JSON key — what a lens cites *from the image itself*,
+/// unrelated to the persisted evidence layer. `"evidence::"` catches a
+/// real module path reference (`crate::evidence::...`,
+/// `super::evidence::...`) without matching either.
+#[test]
+fn no_evidence_type_or_path_reaches_prompt_construction() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/prompt");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&dir).expect("read prompt/ dir") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .expect("file has a name")
+            .to_string_lossy()
+            .into_owned();
+        if name == "tests.rs" {
+            continue; // this file: contains the needles as literals below
+        }
+        let src = std::fs::read_to_string(&path).expect("read prompt source");
+        for needle in ["evidence::", "Evidence", "read_lens_evidence", "reply.raw"] {
+            assert!(
+                !src.contains(needle),
+                "{name} must not reference {needle:?}: persisting evidence must \
+                 never become a channel into a prompt"
+            );
+        }
+        checked += 1;
+    }
+    assert_eq!(
+        checked, 2,
+        "expected to check mod.rs and text.rs; the directory listing changed"
+    );
+}
+
 #[test]
 fn plan_dispatch_treats_a_zero_cap_as_one_dispatch_per_batch() {
     // The chunking guard (cap.max(1)) must not panic on chunks(0), and
