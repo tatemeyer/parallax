@@ -10,7 +10,7 @@ use crate::adapters::verification::{VerificationAdapter, VerificationStatus};
 use crate::adapters::work::{WorkAdapter, WorkSnapshot};
 use crate::adapters::{AdapterError, ProjectContext};
 use crate::autonomy::{resolve, Resolution};
-use crate::freshness::Observed;
+use crate::freshness::{Freshness, Observed};
 use crate::validate::Validated;
 use std::time::SystemTime;
 
@@ -192,6 +192,89 @@ pub fn aggregate(inputs: &mut [(Validated, ProjectAdapters)], now: SystemTime) -
             .iter_mut()
             .map(|(validated, adapters)| aggregate_project(validated, adapters, now))
             .collect(),
+    }
+}
+
+/// One source's identity and how current it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceStatus {
+    /// A stable label a frontend can display, e.g. `verification:tests`.
+    pub label: String,
+    /// How current that source is.
+    pub freshness: Freshness,
+}
+
+/// Ranks a freshness for "which of these is worst", worst last.
+fn severity(freshness: &Freshness) -> u8 {
+    match freshness {
+        Freshness::Live => 0,
+        Freshness::Fresh { .. } => 1,
+        Freshness::Stale { .. } => 2,
+        Freshness::Unavailable { .. } => 3,
+    }
+}
+
+impl ProjectState {
+    /// Every declared source and how current it is at `now`.
+    ///
+    /// This is the API behind "the cockpit displays the age of each
+    /// source": the core cannot render, but it can hand a frontend a
+    /// uniform list so the frontend need not know which sources are
+    /// polled and which are watched. A degraded source stays in the
+    /// list as `Unavailable` rather than disappearing from it.
+    pub fn sources(&self, now: SystemTime) -> Vec<SourceStatus> {
+        let mut out = Vec::new();
+        if let Some(work) = &self.work {
+            out.push(SourceStatus {
+                label: "work".into(),
+                freshness: work.freshness(now),
+            });
+        }
+        for observed in &self.verification {
+            out.push(SourceStatus {
+                label: format!("verification:{}", observed.value.kind),
+                freshness: observed.freshness(now),
+            });
+        }
+        for (i, observed) in self.artifacts.iter().enumerate() {
+            out.push(SourceStatus {
+                label: format!("artifacts[{i}]"),
+                freshness: observed.freshness(now),
+            });
+        }
+        if let Some(sessions) = &self.sessions {
+            out.push(SourceStatus {
+                label: "sessions".into(),
+                freshness: sessions.freshness(now),
+            });
+        }
+        for degradation in &self.degradations {
+            out.push(SourceStatus {
+                label: degradation.source.clone(),
+                freshness: Freshness::Unavailable {
+                    since: None,
+                    reason: degradation.reason.clone(),
+                },
+            });
+        }
+        out
+    }
+
+    /// The source a frontend should worry about first, if any.
+    pub fn stalest(&self, now: SystemTime) -> Option<SourceStatus> {
+        self.sources(now)
+            .into_iter()
+            .max_by_key(|s| severity(&s.freshness))
+    }
+}
+
+impl PlatformState {
+    /// Every degraded source across every project, with its project.
+    pub fn degraded(&self) -> Vec<(&str, &Degradation)> {
+        self.projects
+            .iter()
+            .flat_map(|p| p.degradations.iter().map(move |d| (p.name.as_str(), d)))
+            .collect()
     }
 }
 
@@ -389,5 +472,106 @@ work:
             .push(Box::new(StubVerification(VerificationOutcome::Pass)));
         let state = aggregate_project(&ttui(), &mut adapters, at(42));
         assert_eq!(state.verification[0].observed_at, at(42));
+    }
+}
+
+#[cfg(test)]
+mod freshness_surface_tests {
+    use super::tests::*;
+    use super::*;
+    use crate::adapters::verification::VerificationOutcome;
+    use crate::freshness::Freshness;
+    use std::time::Duration;
+
+    #[test]
+    fn every_reachable_source_appears_with_its_own_freshness() {
+        let mut adapters = ProjectAdapters::new();
+        adapters.work = Some(Box::new(StubWork {
+            result: Some(WorkSnapshot { items: vec![] }),
+        }));
+        adapters
+            .verification
+            .push(Box::new(StubVerification(VerificationOutcome::Pass)));
+        let state = aggregate_project(&ttui(), &mut adapters, at(0));
+
+        let sources = state.sources(at(10));
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].label, "work");
+        assert_eq!(
+            sources[0].freshness,
+            Freshness::Fresh {
+                age: Duration::from_secs(10)
+            }
+        );
+        assert_eq!(sources[1].label, "verification:tests");
+        assert_eq!(
+            sources[1].freshness,
+            Freshness::Live,
+            "filesystem-backed is immediate"
+        );
+    }
+
+    #[test]
+    fn a_polled_source_past_its_interval_reports_stale() {
+        let mut adapters = ProjectAdapters::new();
+        adapters.work = Some(Box::new(StubWork {
+            result: Some(WorkSnapshot { items: vec![] }),
+        }));
+        let state = aggregate_project(&ttui(), &mut adapters, at(0));
+        assert!(state.sources(at(45))[0].freshness.is_stale());
+    }
+
+    /// A degraded source stays in the list. One that vanished would read
+    /// as a source that was never declared.
+    #[test]
+    fn a_degraded_source_appears_as_unavailable_with_its_reason() {
+        let mut adapters = ProjectAdapters::new();
+        adapters.work = Some(Box::new(StubWork { result: None }));
+        let state = aggregate_project(&ttui(), &mut adapters, at(0));
+
+        let sources = state.sources(at(0));
+        assert_eq!(sources.len(), 1);
+        match &sources[0].freshness {
+            Freshness::Unavailable { reason, .. } => assert!(reason.contains("rate limited")),
+            other => panic!("expected Unavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_project_with_no_adapters_reports_no_sources_rather_than_a_fake_one() {
+        let state = aggregate_project(&ttui(), &mut ProjectAdapters::new(), at(0));
+        assert!(state.sources(at(0)).is_empty());
+    }
+
+    #[test]
+    fn stalest_picks_unavailable_over_stale_over_fresh_over_live() {
+        let mut adapters = ProjectAdapters::new();
+        adapters.work = Some(Box::new(StubWork { result: None }));
+        adapters
+            .verification
+            .push(Box::new(StubVerification(VerificationOutcome::Pass)));
+        let state = aggregate_project(&ttui(), &mut adapters, at(0));
+        assert!(matches!(
+            state.stalest(at(0)).unwrap().freshness,
+            Freshness::Unavailable { .. }
+        ));
+    }
+
+    #[test]
+    fn stalest_is_none_when_a_project_has_no_sources() {
+        let state = aggregate_project(&ttui(), &mut ProjectAdapters::new(), at(0));
+        assert!(state.stalest(at(0)).is_none());
+    }
+
+    #[test]
+    fn the_platform_lists_every_degradation_with_the_project_it_belongs_to() {
+        let mut adapters = ProjectAdapters::new();
+        adapters.work = Some(Box::new(StubWork { result: None }));
+        let mut inputs = vec![(ttui(), adapters)];
+        let platform = aggregate(&mut inputs, at(0));
+        let degraded = platform.degraded();
+        assert_eq!(degraded.len(), 1);
+        assert_eq!(degraded[0].0, "ttui");
+        assert_eq!(degraded[0].1.source, "work:stub");
     }
 }
