@@ -1,0 +1,17 @@
+[package]
+name = "parallax-baseline"
+version = "0.1.0"
+edition = "2021"
+description = "Manifests, adapters, normalized autonomy, aggregated state, and control actions for the Parallax platform. Headless: never touches a terminal."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+globset = "0.4"
+walkdir = "2"
+sha2 = "0.10"
+ureq = { version = "2", features = ["json"] }
+
+[dev-dependencies]
+tempfile = "3"
