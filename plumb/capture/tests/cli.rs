@@ -114,10 +114,13 @@ fn capture_of_a_working_command_scenario_exits_0_and_writes_a_manifest() {
     let src_dir = tempfile::tempdir().unwrap();
     let src = src_dir.path().join("fixture.png");
     image::RgbaImage::new(4, 4).save(&src).unwrap();
+    // Both branches quote with `"` — see `cli::capture`'s copy_cmd: this
+    // is embedded in a single-quoted YAML scalar, which a `'`-quoted
+    // command would terminate early.
     let copy_cmd = if cfg!(windows) {
         format!("copy \"{}\" \"{{out}}.png\"", src.display())
     } else {
-        format!("cp '{}' '{{out}}.png'", src.display())
+        format!("cp \"{}\" \"{{out}}.png\"", src.display())
     };
     let config = tmp.path().join("config.yaml");
     write(
@@ -146,6 +149,16 @@ fn capture_of_a_working_command_scenario_exits_0_and_writes_a_manifest() {
     // into the run directory (the manifest) or printed to its own
     // stdout carries the adapter's command line.
     let manifest_text = std::fs::read_to_string(manifest_path).unwrap();
-    assert!(!manifest_text.contains("copy") && !manifest_text.contains("cp '"));
+    // Assert on the command and the source path themselves rather than a
+    // quoting-specific prefix, so this keeps testing the blinding
+    // boundary if the fixture's quoting changes again.
+    assert!(
+        !manifest_text.contains(&copy_cmd),
+        "manifest leaked the adapter command"
+    );
+    assert!(
+        !manifest_text.contains(&src.display().to_string()),
+        "manifest leaked the source path"
+    );
     assert!(!stdout.contains(&src.display().to_string()));
 }
