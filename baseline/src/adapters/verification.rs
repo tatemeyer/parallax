@@ -5,7 +5,7 @@
 
 use super::{AdapterError, ProjectContext};
 use crate::freshness::Observed;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
@@ -199,6 +199,92 @@ fn last_line(text: &str) -> Option<String> {
         .map(str::trim)
         .find(|l| !l.is_empty())
         .map(str::to_string)
+}
+
+/// Reads Plumb's overall verdict from a rendered `verdict.md`.
+///
+/// Deliberately narrow: only the first line naming one of the three
+/// states counts, and `NO-GO` is tested before `GO` because it contains
+/// it. **This parses text; it does not link Plumb.**
+pub fn parse_verdict(text: &str) -> Option<VerificationOutcome> {
+    for line in text.lines() {
+        if line.contains("NO-GO") {
+            return Some(VerificationOutcome::Fail);
+        }
+        if line.contains("HOLD") {
+            return Some(VerificationOutcome::Hold);
+        }
+        if line.contains("GO") {
+            return Some(VerificationOutcome::Pass);
+        }
+    }
+    None
+}
+
+/// Reads the most recent Plumb run's verdict from a runs directory.
+/// Run directories are named with sortable UTC run ids, so "most
+/// recent" is the lexicographically greatest name that has a verdict.
+pub struct PlumbVerificationAdapter {
+    kind: String,
+    runs_dir: PathBuf,
+}
+
+impl PlumbVerificationAdapter {
+    /// An adapter reading `runs_dir`, reporting as `kind`.
+    pub fn new(kind: impl Into<String>, runs_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            kind: kind.into(),
+            runs_dir: runs_dir.into(),
+        }
+    }
+}
+
+impl VerificationAdapter for PlumbVerificationAdapter {
+    fn source_name(&self) -> String {
+        format!("verification:plumb:{}", self.kind)
+    }
+
+    fn check(
+        &mut self,
+        _ctx: &ProjectContext,
+        now: SystemTime,
+    ) -> Result<Observed<VerificationStatus>, AdapterError> {
+        let mut best: Option<(String, VerificationOutcome)> = None;
+        if let Ok(entries) = std::fs::read_dir(&self.runs_dir) {
+            for entry in entries.flatten() {
+                let run_id = entry.file_name().to_string_lossy().into_owned();
+                let verdict_path = entry.path().join("verdict.md");
+                let Ok(text) = std::fs::read_to_string(&verdict_path) else {
+                    // An in-progress run has no verdict yet. Skipping it
+                    // is not a failure of the check.
+                    continue;
+                };
+                let Some(outcome) = parse_verdict(&text) else {
+                    continue;
+                };
+                if best.as_ref().is_none_or(|(id, _)| run_id > *id) {
+                    best = Some((run_id, outcome));
+                }
+            }
+        }
+
+        let status = match best {
+            Some((run_id, outcome)) => VerificationStatus {
+                kind: self.kind.clone(),
+                outcome,
+                detail: Some(run_id),
+            },
+            None => VerificationStatus {
+                kind: self.kind.clone(),
+                outcome: VerificationOutcome::NotRun,
+                detail: Some(format!(
+                    "no completed run under {}",
+                    self.runs_dir.display()
+                )),
+            },
+        };
+        Ok(Observed::watched(status, now))
+    }
 }
 
 #[cfg(test)]
