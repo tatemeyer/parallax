@@ -467,7 +467,7 @@ fn motion_scopes_itself_to_what_only_a_sequence_reveals() {
 fn image_path_is_rendered_as_a_file_name_only_never_a_full_or_absolute_path() {
     let mut manifest = m(1, None, vec![]);
     manifest.image = std::path::PathBuf::from(
-        "D:/Dev/Projects/TTUI/.plumb/runs/20260101T000000Z/falcon-glitch-burst.gif",
+        "D:/Example/Projects/DemoApp/.plumb/runs/20260101T000000Z/falcon-glitch-burst.gif",
     );
     let p = build_prompt(&LensInputs {
         lens: Lens::Breakage,
@@ -477,8 +477,8 @@ fn image_path_is_rendered_as_a_file_name_only_never_a_full_or_absolute_path() {
     });
     assert!(p.contains("falcon-glitch-burst.gif"));
     for leaked in [
-        "TTUI",
-        "Dev",
+        "DemoApp",
+        "Example",
         "Projects",
         ".plumb/runs",
         "20260101T000000Z",

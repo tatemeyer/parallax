@@ -41,7 +41,7 @@ Copied from
 Every task's requirements implicitly include this section.
 
 **Where the work happens.** A new workspace member at `baseline/` in the
-existing `Parallax` repository (`D:/Dev/Projects/Parallax`), package
+existing `Parallax` repository (`<projects-root>/Parallax`), package
 `parallax-baseline`, added to the root `Cargo.toml`'s `members`. The
 existing member is `plumb/capture` (sub-project #1). **Do not
 restructure anything already there.** Every command in this plan runs
@@ -1016,7 +1016,7 @@ mod tests {
 apiVersion: parallax/v1
 project:
   name: ttui
-  root: D:/Dev/Projects/TTUI
+  root: <projects-root>/TTUI
   language: rust
   methodology: methodology-first
 work:
@@ -1402,7 +1402,7 @@ mod tests {
         r#"
 project:
   name: ttui
-  root: D:/Dev/Projects/TTUI
+  root: <projects-root>/TTUI
 work:
   adapter: github
   repo: tatemeyer/ttui
@@ -1869,7 +1869,7 @@ Expected: FAIL — `manifests/ttui.yaml` does not exist.
 apiVersion: parallax/v1
 project:
   name: ttui
-  root: D:/Dev/Projects/TTUI
+  root: <projects-root>/TTUI
   language: rust
   methodology: methodology-first     # informational only
 work:
@@ -1990,7 +1990,7 @@ const WORK_ONLY: &str = r#"
 apiVersion: parallax/v1
 project:
   name: work-only
-  root: D:/Dev/Projects/WorkOnly
+  root: <projects-root>/AnotherProject
 work:
   adapter: github
   repo: tatemeyer/work-only
@@ -2432,8 +2432,8 @@ mod tests {
 
     #[test]
     fn a_project_context_resolves_relative_paths_against_the_project_root() {
-        let ctx = ProjectContext::new("ttui", "D:/Dev/Projects/TTUI");
-        assert_eq!(ctx.resolve(".plumb/config.yaml"), std::path::PathBuf::from("D:/Dev/Projects/TTUI/.plumb/config.yaml"));
+        let ctx = ProjectContext::new("ttui", "<projects-root>/TTUI");
+        assert_eq!(ctx.resolve(".plumb/config.yaml"), std::path::PathBuf::from("<projects-root>/TTUI/.plumb/config.yaml"));
     }
 
     #[test]
@@ -3310,7 +3310,7 @@ fn transport() -> FixtureTransport {
 }
 
 fn ctx() -> ProjectContext {
-    ProjectContext::new("ttui", "D:/Dev/Projects/TTUI").with_repo(REPO)
+    ProjectContext::new("ttui", "<projects-root>/TTUI").with_repo(REPO)
 }
 
 fn at(secs: u64) -> SystemTime {
@@ -3718,7 +3718,7 @@ mod command_tests {
     }
 
     fn ctx() -> ProjectContext {
-        ProjectContext::new("ttui", "D:/Dev/Projects/TTUI")
+        ProjectContext::new("ttui", "<projects-root>/TTUI")
     }
 
     #[test]
@@ -5131,7 +5131,7 @@ mod tests {
     const TTUI_YAML: &str = r#"
 project:
   name: ttui
-  root: D:/Dev/Projects/TTUI
+  root: <projects-root>/TTUI
 work:
   adapter: github
   repo: tatemeyer/ttui
@@ -7655,7 +7655,7 @@ execution options:
 
 Three notes whichever is chosen:
 
-- **Everything executes in `D:/Dev/Projects/Parallax`**, on a worktree
+- **Everything executes in `<projects-root>/Parallax`**, on a worktree
   branch per `git-github-standards.md`, and lands through one Gated PR
   with all four checks green. No task touches the TTUI repo, and no
   task touches `plumb/`.

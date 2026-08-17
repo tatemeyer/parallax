@@ -966,14 +966,14 @@ is *legible* has no unit test.
 - [ ] **Step 1: Run a real scenario end to end**
 
 From the TTUI worktree
-`D:/Dev/Projects/TTUI/.claude/worktrees/plumb-seed-scenario`, capture
+`<projects-root>/TTUI/.claude/worktrees/plumb-seed-scenario`, capture
 `omnitrix-dial-rotate` into a fresh run directory, then `plan`, then
 dispatch the four lenses through the harness, then `merge`.
 
 - [ ] **Step 2: Generate the report**
 
 ```bash
-D:/Dev/Projects/Parallax/target/debug/plumb.exe report .plumb/runs/<id> --out report.html
+<projects-root>/Parallax/target/debug/plumb.exe report .plumb/runs/<id> --out report.html
 ```
 
 - [ ] **Step 3: Open it and answer these, in writing**
