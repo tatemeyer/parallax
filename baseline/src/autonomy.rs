@@ -113,12 +113,55 @@ pub fn project(map: &AutonomyMap, label: &str) -> Option<Autonomy> {
     })
 }
 
-#[cfg(test)]
-mod projection_tests {
-    use super::*;
-    use std::collections::BTreeMap;
+/// The outcome of projecting every label on one work item.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Resolution {
+    /// The combined projection across every mapped label.
+    pub autonomy: Autonomy,
+    /// The labels the manifest declares, in the order given.
+    pub matched: Vec<String>,
+    /// Labels the manifest does not declare, in the order given.
+    pub unmapped: Vec<String>,
+}
 
-    fn entry(
+/// Resolves every label on one work item into a single `Autonomy`.
+///
+/// Per axis: a stated claim always beats "no claim", and when two
+/// labels both state a claim the more restrictive one wins. Order
+/// independent by construction.
+pub fn resolve(map: &AutonomyMap, labels: &[String]) -> Resolution {
+    let mut out = Resolution::default();
+    for label in labels {
+        match project(map, label) {
+            Some(a) => {
+                out.matched.push(label.clone());
+                out.autonomy.implement = most_restrictive(out.autonomy.implement, a.implement);
+                out.autonomy.merge = most_restrictive(out.autonomy.merge, a.merge);
+                out.autonomy.readiness = out.autonomy.readiness.max(a.readiness);
+            }
+            None => out.unmapped.push(label.clone()),
+        }
+    }
+    out
+}
+
+/// A stated claim beats no claim; between two claims the higher
+/// (more restrictive) variant wins.
+fn most_restrictive<T: Ord>(a: Option<T>, b: Option<T>) -> Option<T> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, b) => b,
+    }
+}
+
+/// The two real projects' autonomy maps, shared by every test module in
+/// this file so there is one definition of each.
+#[cfg(test)]
+mod projection_tests_support {
+    use super::*;
+
+    pub fn entry(
         implement: Option<Implement>,
         merge: Option<Merge>,
         readiness: Option<Readiness>,
@@ -131,7 +174,7 @@ mod projection_tests {
     }
 
     /// TTUI's three tiers, exactly as `manifests/ttui.yaml` declares them.
-    fn ttui_map() -> AutonomyMap {
+    pub fn ttui_map() -> AutonomyMap {
         let mut m = BTreeMap::new();
         m.insert(
             "direct".to_string(),
@@ -149,7 +192,7 @@ mod projection_tests {
     }
 
     /// Model-Experiments' four labels, exactly as its manifest declares them.
-    fn me_map() -> AutonomyMap {
+    pub fn me_map() -> AutonomyMap {
         let mut m = BTreeMap::new();
         m.insert(
             "autonomy:safe".to_string(),
@@ -169,6 +212,12 @@ mod projection_tests {
         );
         AutonomyMap::new(m)
     }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::projection_tests_support::{me_map, ttui_map};
+    use super::*;
 
     // --- The spec's projection table. One test per row. ---
 
@@ -297,6 +346,89 @@ mod projection_tests {
     fn label_lookup_is_exact_and_case_sensitive() {
         assert_eq!(project(&ttui_map(), "Direct"), None);
         assert!(project(&ttui_map(), "direct").is_some());
+    }
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    use super::projection_tests_support::{me_map, ttui_map};
+    use super::*;
+
+    fn labels(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn no_labels_at_all_claims_nothing() {
+        let r = resolve(&ttui_map(), &[]);
+        assert_eq!(r.autonomy, no_claim());
+        assert!(r.matched.is_empty());
+        assert!(r.unmapped.is_empty());
+    }
+
+    #[test]
+    fn a_single_mapped_label_resolves_to_its_row() {
+        let r = resolve(&ttui_map(), &labels(&["gated"]));
+        assert_eq!(r.autonomy.merge, Some(Merge::OnChecks));
+        assert_eq!(r.matched, vec!["gated".to_string()]);
+    }
+
+    #[test]
+    fn unmapped_labels_are_reported_not_dropped_and_not_fatal() {
+        let r = resolve(&ttui_map(), &labels(&["bug", "gated", "documentation"]));
+        assert_eq!(r.autonomy.merge, Some(Merge::OnChecks));
+        assert_eq!(r.matched, vec!["gated".to_string()]);
+        assert_eq!(r.unmapped, labels(&["bug", "documentation"]));
+    }
+
+    /// The real combination: work that is agent-implementable and merges
+    /// on checks, but whose success criterion is not written yet.
+    #[test]
+    fn needs_intent_combines_with_a_tier_rather_than_overriding_it() {
+        let r = resolve(&me_map(), &labels(&["autonomy:safe", "needs-intent"]));
+        assert_eq!(r.autonomy.implement, Some(Implement::Agent));
+        assert_eq!(r.autonomy.merge, Some(Merge::OnChecks));
+        assert_eq!(r.autonomy.readiness, Readiness::NeedsIntent);
+    }
+
+    #[test]
+    fn conflicting_labels_resolve_to_the_most_restrictive_value_per_axis() {
+        let r = resolve(&me_map(), &labels(&["autonomy:safe", "autonomy:review"]));
+        assert_eq!(
+            r.autonomy.merge,
+            Some(Merge::HumanApproval),
+            "human-approval outranks on-checks"
+        );
+
+        let r = resolve(&me_map(), &labels(&["autonomy:safe", "autonomy:human"]));
+        assert_eq!(
+            r.autonomy.implement,
+            Some(Implement::HumanOnly),
+            "human-only outranks agent"
+        );
+    }
+
+    /// "No claim" never beats a claim: a label that says nothing about
+    /// an axis must not erase what another label said about it.
+    #[test]
+    fn a_label_making_no_claim_does_not_erase_another_label_s_claim() {
+        let r = resolve(&me_map(), &labels(&["autonomy:safe", "needs-intent"]));
+        assert_eq!(r.autonomy.merge, Some(Merge::OnChecks));
+        let r = resolve(&me_map(), &labels(&["autonomy:human", "autonomy:safe"]));
+        assert_eq!(r.autonomy.merge, Some(Merge::OnChecks));
+    }
+
+    #[test]
+    fn resolution_is_order_independent() {
+        let a = resolve(&me_map(), &labels(&["autonomy:review", "autonomy:safe"]));
+        let b = resolve(&me_map(), &labels(&["autonomy:safe", "autonomy:review"]));
+        assert_eq!(a.autonomy, b.autonomy);
+    }
+
+    #[test]
+    fn matched_labels_are_reported_in_the_order_they_appeared() {
+        let r = resolve(&me_map(), &labels(&["needs-intent", "autonomy:safe"]));
+        assert_eq!(r.matched, labels(&["needs-intent", "autonomy:safe"]));
     }
 }
 
