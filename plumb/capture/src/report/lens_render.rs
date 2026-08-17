@@ -118,16 +118,26 @@ fn evidence_count<T>(evidence: &Evidence<Vec<T>>) -> Count {
 /// The attrition chain: how many findings this lens originally
 /// reported, how many were dropped, clamped, and suppressed, and how
 /// many survived. `raw` is derived (dropped + survivors + suppressed)
-/// rather than stored, and is itself unknown whenever `dropped` or
-/// `suppressed` is. `clamped` is a subset of `survivors`, not a term
-/// in that sum, so its own `?` never corrupts `raw`.
+/// rather than stored, and is itself unknown whenever `dropped`,
+/// `suppressed`, or `survivors` is. `clamped` is a subset of
+/// `survivors`, not a term in that sum, so its own `?` never corrupts
+/// `raw`. `survivors` is gated on `lens.parsed`'s own state exactly
+/// like every other term here is gated on its own evidence source —
+/// `lens.findings.len()` is only trustworthy when `parsed.json` itself
+/// was actually readable; a corrupt `parsed.json` empties `findings`
+/// (see `assemble::build_lens_report`), and a bare `usize` derived
+/// from that would silently read as a known, healthy zero instead of
+/// the unread artifact it actually is.
 fn render_attrition(lens: &LensReport) -> String {
     let dropped = evidence_count(&lens.dropped);
     let clamped = evidence_count(&lens.clamped);
     let suppressed = evidence_count(&lens.suppressed);
-    let survivors = lens.findings.len();
-    let raw = match (&dropped, &suppressed) {
-        (Count::Known(d), Count::Known(s)) => Count::Known(d + survivors + s),
+    let survivors = match &lens.parsed {
+        Evidence::Present(()) => Count::Known(lens.findings.len()),
+        Evidence::Missing | Evidence::Unparseable(_) => Count::Unknown,
+    };
+    let raw = match (&dropped, &survivors, &suppressed) {
+        (Count::Known(d), Count::Known(sv), Count::Known(s)) => Count::Known(d + sv + s),
         _ => Count::Unknown,
     };
     format!(
@@ -157,12 +167,20 @@ fn render_findings(findings: &[RenderedFinding]) -> String {
             html_escape(&f.evidence),
             html_escape(confidence_label(f.confidence))
         ));
-        if let Some(uri) = &rf.crop_uri {
-            out.push_str(&format!(
+        match &rf.crop_uri {
+            Some(uri) => out.push_str(&format!(
                 "<img class=\"crop\" src=\"{}\" alt=\"cropped frame for: {}\">\n",
                 html_escape(uri),
                 html_escape(&f.region)
-            ));
+            )),
+            // A declined region (ambiguous, or naming no frame at all)
+            // must say so explicitly — rendering nothing here is its
+            // own small instance of this whole task's rule, since a
+            // reader can't tell "declined, see the full sheet above"
+            // from "this finding has no visual evidence at all".
+            None => out.push_str(
+                "<p class=\"empty\">region not resolved to a frame (see the full contact sheet above)</p>\n",
+            ),
         }
         out.push_str("</div>\n");
     }
@@ -288,207 +306,4 @@ pub(crate) fn render_lens(lens: &LensReport) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sample_finding(claim: &str) -> Finding {
-        Finding {
-            lens: Lens::Breakage,
-            scenario: "s".into(),
-            severity: Severity::Major,
-            region: "top row, first frame".into(),
-            claim: claim.into(),
-            evidence: "e".into(),
-            confidence: Confidence::High,
-        }
-    }
-
-    fn empty_lens(lens: Lens) -> LensReport {
-        LensReport {
-            lens,
-            parsed: Evidence::Present(()),
-            findings: vec![],
-            dropped: Evidence::Missing,
-            clamped: Evidence::Missing,
-            suppressed: Evidence::Missing,
-            prompt: Evidence::Missing,
-            replies: vec![],
-        }
-    }
-
-    #[test]
-    fn a_lens_with_no_persisted_reply_says_so() {
-        let html = render_lens(&empty_lens(Lens::Breakage));
-        assert!(html.contains("no reply persisted"));
-    }
-
-    #[test]
-    fn dropped_and_clamped_findings_keep_their_claim_text() {
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.dropped = Evidence::Present(vec![sample_finding("DROPPED-CLAIM-TEXT")]);
-        lens.clamped = Evidence::Present(vec![ClampRecord {
-            finding: sample_finding("CLAMPED-CLAIM-TEXT"),
-            from: Severity::Blocker,
-        }]);
-        let html = render_lens(&lens);
-        assert!(html.contains("DROPPED-CLAIM-TEXT"));
-        assert!(html.contains("CLAMPED-CLAIM-TEXT"));
-    }
-
-    #[test]
-    fn a_suppressed_findings_claim_text_survives_into_the_report() {
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.suppressed = Evidence::Present(vec![sample_finding("SUPPRESSED-CLAIM-TEXT")]);
-        let html = render_lens(&lens);
-        assert!(html.contains("SUPPRESSED-CLAIM-TEXT"));
-    }
-
-    #[test]
-    fn a_corrupt_parsed_json_is_marked_unparseable_not_zero_findings() {
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.parsed = Evidence::Unparseable("not json at all".into());
-        let html = render_lens(&lens);
-        assert!(html.contains("findings: present but unparseable"));
-        assert!(html.contains("not json at all"));
-    }
-
-    #[test]
-    fn the_attrition_chain_accounts_for_every_finding() {
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.dropped = Evidence::Present(vec![sample_finding("d")]);
-        lens.clamped = Evidence::Present(vec![ClampRecord {
-            finding: sample_finding("c"),
-            from: Severity::Blocker,
-        }]);
-        lens.suppressed = Evidence::Present(vec![sample_finding("s")]);
-        lens.findings = vec![RenderedFinding {
-            finding: sample_finding("kept"),
-            crop_uri: None,
-        }];
-        let html = render_lens(&lens);
-        assert!(
-            html.contains("3 raw \u{2192} 1 dropped \u{2192} 1 clamped \u{2192} 1 suppressed \u{2192} 1 survivors"),
-            "attrition chain must read 3 raw -> 1 dropped -> 1 clamped -> 1 suppressed -> 1 survivors: {html}"
-        );
-    }
-
-    #[test]
-    fn a_finding_with_a_resolved_crop_embeds_it() {
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.findings = vec![RenderedFinding {
-            finding: sample_finding("kept with crop"),
-            crop_uri: Some("data:image/png;base64,AAAA".into()),
-        }];
-        let html = render_lens(&lens);
-        assert!(html.contains("data:image/png;base64,AAAA"));
-        assert!(html.contains("kept with crop"));
-    }
-
-    #[test]
-    fn a_crop_uri_is_escaped_like_every_other_interpolated_string() {
-        // Safe today (a crop URI is always our own generated base64),
-        // but the escaping must not depend on that fact — route it
-        // through html_escape for consistency with the sheet URI and
-        // every other interpolated string, so a future non-base64
-        // source can never slip an unescaped quote or tag into `src`.
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.findings = vec![RenderedFinding {
-            finding: sample_finding("kept with a hostile crop uri"),
-            crop_uri: Some("data:image/png;base64,AAA\"><script>alert(1)</script>".into()),
-        }];
-        let html = render_lens(&lens);
-        assert!(
-            !html.contains("\"><script>alert(1)</script>"),
-            "the crop uri must be escaped, not interpolated raw: {html}"
-        );
-        assert!(html.contains("&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"));
-    }
-
-    #[test]
-    fn the_attrition_chain_shows_unknown_rather_than_zero_when_dropped_is_missing() {
-        // dropped.json never persisted: the true count is unknown, and
-        // an unknown count must never render as 0 — that would make an
-        // unreadable artifact look like a healthy "found nothing"
-        // result, the exact failure this whole task exists to prevent.
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.dropped = Evidence::Missing;
-        lens.clamped = Evidence::Present(vec![]);
-        lens.suppressed = Evidence::Present(vec![]);
-        lens.findings = vec![RenderedFinding {
-            finding: sample_finding("kept"),
-            crop_uri: None,
-        }];
-        let html = render_lens(&lens);
-        assert!(
-            html.contains("? raw \u{2192} ? dropped \u{2192} 0 clamped \u{2192} 0 suppressed \u{2192} 1 survivors"),
-            "an unknown dropped count must show ?, and must make raw unknown too: {html}"
-        );
-    }
-
-    #[test]
-    fn a_missing_clamped_count_reads_as_unknown_without_making_raw_unknown() {
-        // clamped is a subset of survivors, not a term in the raw sum
-        // (dropped + survivors + suppressed) — its own unreadability
-        // must still show as ?, but must not spuriously blank out an
-        // otherwise-known raw count.
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.dropped = Evidence::Present(vec![]);
-        lens.clamped = Evidence::Missing;
-        lens.suppressed = Evidence::Present(vec![]);
-        lens.findings = vec![RenderedFinding {
-            finding: sample_finding("kept"),
-            crop_uri: None,
-        }];
-        let html = render_lens(&lens);
-        assert!(
-            html.contains("1 raw \u{2192} 0 dropped \u{2192} ? clamped \u{2192} 0 suppressed \u{2192} 1 survivors"),
-            "a missing clamped count shows ? without corrupting raw: {html}"
-        );
-    }
-
-    #[test]
-    fn dropped_being_unparseable_shows_the_raw_text() {
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.dropped = Evidence::Unparseable("not json at all".into());
-        let html = render_lens(&lens);
-        assert!(html.contains("Dropped (no region named): present but unparseable"));
-        assert!(html.contains("not json at all"));
-    }
-
-    #[test]
-    fn clamped_being_unparseable_shows_the_raw_text() {
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.clamped = Evidence::Unparseable("also not json".into());
-        let html = render_lens(&lens);
-        assert!(html.contains("Clamped: present but unparseable"));
-        assert!(html.contains("also not json"));
-    }
-
-    #[test]
-    fn suppressed_being_unparseable_shows_the_raw_text() {
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.suppressed = Evidence::Unparseable("still not json".into());
-        let html = render_lens(&lens);
-        assert!(html.contains("Suppressed (overruled by a prior ruling): present but unparseable"));
-        assert!(html.contains("still not json"));
-    }
-
-    #[test]
-    fn a_missing_parsed_json_says_not_persisted() {
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.parsed = Evidence::Missing;
-        let html = render_lens(&lens);
-        assert!(html.contains("findings: not persisted"));
-    }
-
-    #[test]
-    fn a_lens_reporting_zero_findings_is_distinct_from_no_reply() {
-        // Present(vec![]) — the lens genuinely dropped nothing — must
-        // not read the same as an absent reply.
-        let mut lens = empty_lens(Lens::Breakage);
-        lens.replies = vec![(1, "[]".into())];
-        let html = render_lens(&lens);
-        assert!(!html.contains("no reply persisted"));
-        assert!(html.contains("no findings"));
-    }
-}
+mod tests;
