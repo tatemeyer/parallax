@@ -1,14 +1,18 @@
 //! Resolves a finding's free-text `region` claim to a contact-sheet
 //! frame index, conservatively: only when the text unambiguously names
-//! exactly one frame. Two phrasings are accepted — an explicit frame
-//! number (`frame 3`, `frame #3`) and a row-word-plus-ordinal phrase
+//! exactly one frame. Three phrasings are accepted — an explicit frame
+//! number (`frame 3`, `frame #3`), a row-word-plus-ordinal phrase
 //! (`top row, third frame`, tolerating a parenthetical remark between
-//! the ordinal and `frame`). Everything else — a numeric range, a
-//! reference to two distinct frames, an ordinal with no row word or
-//! vice versa — returns `None` so the report falls back to showing
-//! the full sheet rather than risk cropping the wrong pixels beside a
-//! confident claim. A wrong crop costs a reader's trust in every crop
-//! after it; no crop only costs a moment of scanning.
+//! the ordinal and `frame`), and an ordinal frame reference paired with
+//! a compass position qualifier instead of a row word (`first frame,
+//! top-left`, `first frame of the contact sheet (top-left panel)`).
+//! Everything else — a numeric range, a reference to two distinct
+//! frames, an ordinal with no row word and no position qualifier, or a
+//! qualifier that disagrees with the ordinal's own linear position —
+//! returns `None` so the report falls back to showing the full sheet
+//! rather than risk cropping the wrong pixels beside a confident
+//! claim. A wrong crop costs a reader's trust in every crop after it;
+//! no crop only costs a moment of scanning.
 
 const ROW_WORDS: [(&str, u32); 3] = [("top", 0), ("middle", 1), ("bottom", 2)];
 
@@ -22,6 +26,19 @@ const ORDINAL_WORDS: [(&str, u32); 9] = [
     ("seventh", 6),
     ("eighth", 7),
     ("ninth", 8),
+];
+
+/// Row synonyms usable in a compass-style position qualifier
+/// (`top-left`, `upper right`) beside an ordinal frame reference. Kept
+/// separate from [`ROW_WORDS`] because this phrasing pairs directly
+/// with a column word (`left`/`right`), never with the word `row`, and
+/// additionally accepts `upper`/`lower` as synonyms for `top`/`bottom`.
+const POSITION_ROW_WORDS: [(&str, u32); 5] = [
+    ("top", 0),
+    ("upper", 0),
+    ("middle", 1),
+    ("bottom", 2),
+    ("lower", 2),
 ];
 
 /// Resolves `region`'s free text to a 0-based frame index within a
@@ -52,6 +69,68 @@ pub fn resolve_frame(region: &str, frame_count: usize, cols: u32) -> Option<usiz
     }
 
     resolve_row_and_ordinal(&text, frame_count, cols)
+        .or_else(|| resolve_ordinal_with_position(&text, frame_count, cols))
+}
+
+/// Resolves an ordinal frame reference paired with a compass position
+/// qualifier instead of a `row`-word phrase (`"first frame, top-left"`,
+/// `"first frame of the contact sheet (top-left panel)"`): the ordinal
+/// names a frame's linear index directly (`first` = index 0), and the
+/// qualifier must agree with the row/column that index actually falls
+/// in. No qualifier at all (`"third frame"` alone) still resolves to
+/// nothing — this only widens the grammar for a reference that commits
+/// to a specific position, not for a bare ordinal — and a disagreeing
+/// qualifier is a confident half-truth, same as every other
+/// disagreement this module already refuses to arbitrate.
+fn resolve_ordinal_with_position(text: &str, frame_count: usize, cols: u32) -> Option<usize> {
+    let ordinal = single_paired_value(text, &ORDINAL_WORDS, "frame")?;
+    let (qual_row, qual_col) = position_qualifier(text, cols)?;
+    let index = ordinal as usize;
+    if index >= frame_count {
+        return None;
+    }
+    let actual_row = ordinal / cols;
+    let actual_col = ordinal % cols;
+    (actual_row == qual_row && actual_col == qual_col).then_some(index)
+}
+
+/// Resolves a compass-style position qualifier (`top-left`, `bottom
+/// right`) to a `(row, col)` pair, treating `left` as the first column
+/// and `right` as the last column of a `cols`-wide grid. `None` when no
+/// such qualifier is present, or when more than one disagreeing
+/// qualifier is named.
+fn position_qualifier(text: &str, cols: u32) -> Option<(u32, u32)> {
+    let mut found: Option<(u32, u32)> = None;
+    for (row_word, row) in POSITION_ROW_WORDS {
+        for start in whole_word_positions(text, row_word) {
+            let after = skip_hyphen_or_ws(text, start + row_word.len());
+            let col = if matches_whole_word_at(text, after, "left") {
+                Some(0)
+            } else if matches_whole_word_at(text, after, "right") {
+                Some(cols.saturating_sub(1))
+            } else {
+                None
+            };
+            let Some(col) = col else { continue };
+            match found {
+                None => found = Some((row, col)),
+                Some(existing) if existing == (row, col) => {}
+                Some(_) => return None,
+            }
+        }
+    }
+    found
+}
+
+/// Advances past a single optional hyphen, or any run of whitespace, at
+/// `start` — the tight adjacency a compass qualifier uses (`top-left`,
+/// `top left`), stricter than the ordinal/row phrasing's looser
+/// "whitespace plus optional parenthetical" gap.
+fn skip_hyphen_or_ws(text: &str, start: usize) -> usize {
+    if let Some(rest) = text[start..].strip_prefix('-') {
+        return text.len() - rest.len();
+    }
+    skip_ws(text, start)
 }
 
 /// Every distinct 1-based frame number named by an explicit `frame <n>`
@@ -339,6 +418,72 @@ mod tests {
         assert_eq!(
             resolve_frame("frame 3, top row, third frame", 8, 3),
             Some(2)
+        );
+    }
+
+    // --- Priority 4: widen the grammar for an ordinal frame reference
+    // paired with a compass position qualifier instead of a row word.
+    // Both real strings below are ones a human resolves instantly but
+    // the pre-widening grammar declined (the sole load-bearing token
+    // used to be the literal word `row`). ---
+
+    #[test]
+    fn real_finding_first_frame_top_left_of_the_contact_sheet_resolves() {
+        assert_eq!(
+            resolve_frame("first frame, top-left of the contact sheet", 8, 3),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn real_finding_first_frame_of_the_contact_sheet_top_left_panel_resolves() {
+        assert_eq!(
+            resolve_frame("first frame of the contact sheet (top-left panel)", 8, 3),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn an_ordinal_frame_with_a_disagreeing_position_qualifier_does_not_resolve() {
+        // "third frame" is index 2 (top row, rightmost column in a
+        // 3-wide grid); "top-left" claims column 0. Two different
+        // claims about the same reference — a confident half-truth
+        // either way it's resolved.
+        assert_eq!(resolve_frame("third frame, top-left", 8, 3), None);
+    }
+
+    #[test]
+    fn a_positional_qualifier_naming_two_different_positions_does_not_resolve() {
+        assert_eq!(
+            resolve_frame("first frame, top-left and also bottom-right", 8, 3),
+            None
+        );
+    }
+
+    #[test]
+    fn upper_and_lower_are_accepted_synonyms_for_top_and_bottom() {
+        // "fourth" -> index 3 -> row 1, col 0 in a 3-wide grid; not
+        // top or bottom, so this only guards that the synonym list
+        // itself resolves correctly for a case it does cover.
+        assert_eq!(
+            resolve_frame("seventh frame, lower-left of the sheet", 9, 3),
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn a_bare_ordinal_frame_with_no_position_qualifier_still_does_not_resolve() {
+        // Unchanged from before this widening: an ordinal alone,
+        // paired with neither a row word nor a position qualifier,
+        // stays ambiguous.
+        assert_eq!(resolve_frame("third frame", 8, 3), None);
+    }
+
+    #[test]
+    fn a_position_qualifier_beyond_the_capture_does_not_resolve() {
+        assert_eq!(
+            resolve_frame("ninth frame, top-left of the sheet", 8, 3),
+            None
         );
     }
 }
