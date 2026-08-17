@@ -122,6 +122,18 @@ enum Command {
         #[arg(long, default_value = ".plumb/rulings.jsonl")]
         rulings: PathBuf,
     },
+    /// Render a run's already-captured evidence to a human-facing HTML
+    /// report. A viewer, not a stage: runs no capture, dispatches no
+    /// agents, and never writes into the run directory's evidence. May
+    /// be re-run freely.
+    Report {
+        /// Directory holding the run's evidence to render.
+        run_dir: PathBuf,
+        /// Where to write the rendered report; defaults to
+        /// `<run-dir>/report.html`.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 fn main() {
@@ -294,6 +306,29 @@ mod tests {
                 assert_eq!(rulings, PathBuf::from(".plumb/rulings.jsonl"));
             }
             _ => panic!("expected Rule"),
+        }
+    }
+
+    #[test]
+    fn report_parses_a_positional_run_dir_and_omits_out_by_default() {
+        let a = Args::try_parse_from(["plumb", "report", "r"]).unwrap();
+        match a.command {
+            Command::Report { run_dir, out } => {
+                assert_eq!(run_dir, PathBuf::from("r"));
+                assert!(out.is_none());
+            }
+            _ => panic!("expected Report"),
+        }
+    }
+
+    #[test]
+    fn report_parses_an_explicit_out_path() {
+        let a = Args::try_parse_from(["plumb", "report", "r", "--out", "r/report.html"]).unwrap();
+        match a.command {
+            Command::Report { out, .. } => {
+                assert_eq!(out, Some(PathBuf::from("r/report.html")));
+            }
+            _ => panic!("expected Report"),
         }
     }
 

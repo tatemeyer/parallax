@@ -9,6 +9,7 @@ mod capture;
 mod init;
 mod merge;
 mod plan;
+mod report;
 mod rule;
 mod select;
 
@@ -215,6 +216,7 @@ pub(crate) fn dispatch(command: Command) -> i32 {
                 1
             }
         },
+        Command::Report { run_dir, out } => report::run_report(&run_dir, out.as_deref()),
     }
 }
 
