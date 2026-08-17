@@ -40,8 +40,18 @@ pub struct RunReport {
 /// One scenario's evidence within a run: its contact sheet and each
 /// lens's findings.
 pub struct ScenarioReport {
-    /// The scenario's name, as recorded in the manifest.
+    /// The scenario's name — read from the manifest when it parsed, or
+    /// derived from the manifest filename when it did not (see
+    /// `manifest`).
     pub scenario: String,
+    /// Whether this scenario's own manifest was itself readable.
+    /// `Missing`/`Unparseable` here means every other field is a
+    /// stand-in (no sheet, no frames, no lenses) — the same "absence
+    /// must never read as success" rule `LensReport::parsed` enforces
+    /// one level down, applied here to a whole scenario: a corrupt
+    /// manifest must render as a visible marker, not silently drop its
+    /// scenario from the report.
+    pub manifest: Evidence<()>,
     /// A `data:image/png;base64,…` encoding of the scenario's capture
     /// (the tiled contact sheet for a multi-frame capture, or the bare
     /// image for a single frame), or `None` when the image could not
@@ -212,25 +222,38 @@ fn render_verdict(verdict: &Evidence<String>) -> String {
     format!("<section class=\"verdict\">\n<h2>Verdict</h2>\n{body}</section>\n")
 }
 
-/// Renders one scenario's evidence block: its contact sheet, then each
-/// lens's section in turn (via `lens_render::render_lens`).
+/// Renders one scenario's evidence block: a manifest marker when the
+/// manifest itself was not readable, otherwise its contact sheet then
+/// each lens's section in turn (via `lens_render::render_lens`).
 fn render_scenario(scenario: &ScenarioReport) -> String {
     let mut out = format!(
-        "<section class=\"scenario\">\n<h2>{}</h2>\n<p>Frames: {}</p>\n",
-        html_escape(&scenario.scenario),
-        scenario.frame_count
+        "<section class=\"scenario\">\n<h2>{}</h2>\n",
+        html_escape(&scenario.scenario)
     );
 
-    match &scenario.sheet_uri {
-        Some(uri) => out.push_str(&format!(
-            "<img class=\"sheet\" src=\"{}\" alt=\"contact sheet\">\n",
-            html_escape(uri)
-        )),
-        None => out.push_str("<p class=\"empty\">contact sheet not available</p>\n"),
-    }
-
-    for lens in &scenario.lenses {
-        out.push_str(&render_lens(lens));
+    match &scenario.manifest {
+        Evidence::Missing => {
+            out.push_str("<p class=\"empty\">manifest: not persisted</p>\n");
+        }
+        Evidence::Unparseable(raw) => {
+            out.push_str(&format!(
+                "<p>manifest: present but unparseable</p>\n<pre>{}</pre>\n",
+                html_escape(raw)
+            ));
+        }
+        Evidence::Present(()) => {
+            out.push_str(&format!("<p>Frames: {}</p>\n", scenario.frame_count));
+            match &scenario.sheet_uri {
+                Some(uri) => out.push_str(&format!(
+                    "<img class=\"sheet\" src=\"{}\" alt=\"contact sheet\">\n",
+                    html_escape(uri)
+                )),
+                None => out.push_str("<p class=\"empty\">contact sheet not available</p>\n"),
+            }
+            for lens in &scenario.lenses {
+                out.push_str(&render_lens(lens));
+            }
+        }
     }
 
     out.push_str("</section>\n");
@@ -324,6 +347,7 @@ mod tests {
         run.contract_version = None;
         run.scenarios.push(ScenarioReport {
             scenario: "<script>alert(1)</script> & friends".into(),
+            manifest: Evidence::Present(()),
             sheet_uri: None,
             frame_count: 0,
             lenses: vec![],
@@ -393,6 +417,7 @@ mod tests {
         let mut run = empty_run();
         run.scenarios.push(ScenarioReport {
             scenario: "s".into(),
+            manifest: Evidence::Present(()),
             sheet_uri: None,
             frame_count: 1,
             lenses: vec![],
@@ -406,11 +431,45 @@ mod tests {
         let mut run = empty_run();
         run.scenarios.push(ScenarioReport {
             scenario: "s".into(),
+            manifest: Evidence::Present(()),
             sheet_uri: Some("data:image/png;base64,AAAA".into()),
             frame_count: 8,
             lenses: vec![],
         });
         let html = render_report(&run);
         assert!(html.contains("data:image/png;base64,AAAA"));
+    }
+
+    #[test]
+    fn a_missing_manifest_says_so_rather_than_a_blank_scenario() {
+        let mut run = empty_run();
+        run.scenarios.push(ScenarioReport {
+            scenario: "unreadable".into(),
+            manifest: Evidence::Missing,
+            sheet_uri: None,
+            frame_count: 0,
+            lenses: vec![],
+        });
+        let html = render_report(&run);
+        assert!(html.contains("manifest: not persisted"));
+        assert!(
+            !html.contains("Frames:"),
+            "a scenario with no readable manifest must not report a frame count it never had"
+        );
+    }
+
+    #[test]
+    fn an_unparseable_manifest_shows_the_raw_text() {
+        let mut run = empty_run();
+        run.scenarios.push(ScenarioReport {
+            scenario: "bad".into(),
+            manifest: Evidence::Unparseable("not json at all".into()),
+            sheet_uri: None,
+            frame_count: 0,
+            lenses: vec![],
+        });
+        let html = render_report(&run);
+        assert!(html.contains("manifest: present but unparseable"));
+        assert!(html.contains("not json at all"));
     }
 }
