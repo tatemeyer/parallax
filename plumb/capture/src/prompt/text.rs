@@ -90,6 +90,9 @@ fn caveat_bullet(c: &Caveat) -> String {
         Caveat::UnmappedGlyphSubstituted { codepoint, count } => format!(
             "- {count} cells render a placeholder box in place of {codepoint}. These are\n  a known limitation of the capture, not a defect: do not judge them.\n"
         ),
+        Caveat::PreScriptFrame => String::from(
+            "- The first pane was captured at process start, before any scripted step\n  ran, so it shows only whatever had been drawn by then — often nothing for\n  an app that opens on a boot or fade-in. Its emptiness is a property of\n  when the capture began, not a defect: do not judge it. Judge it only for\n  gross corruption, and judge the run's content from the later panes.\n",
+        ),
     }
 }
 

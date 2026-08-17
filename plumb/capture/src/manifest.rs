@@ -19,6 +19,13 @@ pub enum Caveat {
         /// How many cells were substituted.
         count: usize,
     },
+    /// The contact sheet's first pane was captured at process start,
+    /// before any scripted step ran, so it shows whatever the app had
+    /// drawn at that instant — nothing at all, for an app that opens on
+    /// a boot or fade-in. Emitted for every multi-frame capture, since
+    /// the initial frame is implicit in the output contract rather than
+    /// something a scenario asks for.
+    PreScriptFrame,
 }
 
 /// One captured scenario, as described to the reviewer. This struct is

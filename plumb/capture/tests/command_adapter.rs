@@ -81,6 +81,15 @@ fn a_command_that_writes_a_multiframe_gif_yields_a_contact_sheet_and_keeps_the_g
     assert_eq!(m.frame_count, 4);
     assert_eq!(m.image, std::path::PathBuf::from("fixture.png"));
     assert_eq!(m.animation, Some(std::path::PathBuf::from("fixture.gif")));
+    // ttui#139: the sheet's first pane predates every scripted step, so
+    // a multi-frame capture must disclose it rather than let a lens read
+    // an app's pre-draw instant as a dead frame.
+    assert!(
+        m.caveats
+            .contains(&parallax_plumb::manifest::Caveat::PreScriptFrame),
+        "a multi-frame capture must disclose its pre-script frame: {:?}",
+        m.caveats
+    );
     // Both are bare filenames: the blinding property Task 4 established
     // must hold for the new field exactly as it does for `image`.
     assert_eq!(
