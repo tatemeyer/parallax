@@ -876,12 +876,19 @@ fn report_writes_a_file_and_never_touches_the_run() {
     let before = dir_fingerprint(run); // helper: sorted (name, len) pairs
 
     let out = tmp.path().join("r.html");
-    assert_eq!(run_report(run, Some(&out)), 0);
+    assert!(write_report(run, Some(&out)).is_ok());
     assert!(out.exists());
     assert_eq!(dir_fingerprint(run), before,
         "report is read-only with respect to the run directory");
 }
 ```
+
+> **Corrected 2026-08-16.** This test originally asserted
+> `run_report(...) == 0`, which only type-checks if `run_report` returns
+> something directly comparable to an integer — forcing an `i32` return
+> and breaking `cli/mod.rs`'s convention that every `run_*` is a pure
+> `Result` with `dispatch` owning exit codes. Assert on the
+> `Result`-returning function instead and let `dispatch` map the code.
 
 - [ ] **Step 2: Fail, implement, pass. Verify the gates, commit.**
 
