@@ -36,7 +36,10 @@ impl std::fmt::Display for IoFailure {
 /// Runs the parsed command and returns the process exit code, printing
 /// results and errors along the way. The only place in this binary
 /// that decides an exit code — every subcommand module's `run_*`
-/// function stays a pure `Result`.
+/// function stays a pure `Result`, except `report::run_report`, which
+/// returns the exit code itself (forced by its own spec'd test
+/// asserting `run_report(...) == 0`); `report::write_report`
+/// underneath is the `Result`-returning function.
 pub(crate) fn dispatch(command: Command) -> i32 {
     match command {
         Command::Init { dir } => match init::run_init(&dir) {
