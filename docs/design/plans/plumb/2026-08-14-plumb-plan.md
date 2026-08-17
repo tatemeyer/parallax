@@ -44,7 +44,7 @@ Every task's requirements implicitly include this section.
 
 **Where the work happens.** Arcs 1-5 and 7 execute in a **new
 repository**, `plumb`, created in Arc 1 Slice 1.1 as a sibling of
-`D:/Dev/Projects/TTUI`. Arc 6 (and the single seed-scenario task at the
+`<projects-root>/TTUI`. Arc 6 (and the single seed-scenario task at the
 end of Arc 2) executes **inside the TTUI repo**, on a TTUI worktree
 branch, and lands through TTUI's normal Gated PR flow. No task in this
 plan modifies `tools/visual-snapshot`.

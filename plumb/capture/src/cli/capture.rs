@@ -112,10 +112,16 @@ mod tests {
         let src_dir = tempfile::tempdir().unwrap();
         let src = src_dir.path().join("fixture.png");
         image::RgbaImage::new(4, 4).save(&src).unwrap();
+        // Both branches quote with `"`, because this command is embedded
+        // in a *single-quoted* YAML scalar below. YAML escapes `'` inside
+        // such a scalar by doubling it, so a `'`-quoted command
+        // terminates the scalar at its first quote and the config fails
+        // to parse. Invisible on Windows (which quotes with `"`), and it
+        // broke every Linux run until CI first existed to notice.
         let copy_cmd = if cfg!(windows) {
             format!("copy \"{}\" \"{{out}}.png\"", src.display())
         } else {
-            format!("cp '{}' '{{out}}.png'", src.display())
+            format!("cp \"{}\" \"{{out}}.png\"", src.display())
         };
         let config = write_config(
             tmp.path(),

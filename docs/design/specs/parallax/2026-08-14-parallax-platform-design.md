@@ -160,7 +160,7 @@ just with less detail.
 apiVersion: parallax/v1
 project:
   name: ttui
-  root: D:/Dev/Projects/TTUI
+  root: <projects-root>/TTUI
   language: rust
   methodology: methodology-first     # informational only
 work:
