@@ -117,8 +117,8 @@ mod tests {
     use parallax_plumb::manifest::{self, RunManifest};
     use parallax_plumb::merge::{fingerprint, MergedFinding};
 
-    /// A run directory's contents as sorted (relative path, byte
-    /// length) pairs, walked recursively. Excludes `.html` files:
+    /// A run directory's contents as sorted (relative path, content
+    /// hash) pairs, walked recursively. Excludes `.html` files:
     /// `report` is the only thing ever known to write one into a run
     /// directory (the report itself, which is this run's own
     /// artifact, not evidence) — filtering by that one extension is
@@ -128,7 +128,15 @@ mod tests {
     /// "no evidence artifact changed", not "the directory is
     /// byte-identical" — the latter would be false by construction
     /// whenever the default output path is used.
+    ///
+    /// Hashes actual content rather than comparing byte length: a
+    /// same-size in-place rewrite (e.g. `parsed.json` swapped for a
+    /// different-but-equal-length payload) changed nothing a
+    /// length-only comparison could detect, which would have let a
+    /// stray write through this guard undetected.
     fn dir_fingerprint(dir: &Path) -> Vec<(String, u64)> {
+        use std::hash::{Hash, Hasher};
+
         fn walk(dir: &Path, base: &Path, out: &mut Vec<(String, u64)>) {
             for entry in std::fs::read_dir(dir).expect("read_dir") {
                 let entry = entry.expect("dir entry");
@@ -147,8 +155,10 @@ mod tests {
                         .expect("strip_prefix")
                         .to_string_lossy()
                         .into_owned();
-                    let len = entry.metadata().expect("metadata").len();
-                    out.push((rel, len));
+                    let bytes = std::fs::read(&path).expect("read file");
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    bytes.hash(&mut hasher);
+                    out.push((rel, hasher.finish()));
                 }
             }
         }
@@ -241,6 +251,28 @@ mod tests {
             serde_json::to_string(&vec![merged]).expect("serialize suppressed"),
         )
         .expect("write suppressed.json");
+    }
+
+    /// Priority 3b: `dir_fingerprint` must catch a same-size in-place
+    /// content rewrite, not just a length change — the exact gap a
+    /// byte-length comparison could not close (`report_writes_a_
+    /// file_and_never_touches_the_run` would have passed even if
+    /// `report` silently rewrote `parsed.json` with different content
+    /// of the same length).
+    #[test]
+    fn dir_fingerprint_detects_a_same_size_content_change() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let run = tmp.path();
+        std::fs::write(run.join("parsed.json"), b"AAAA").expect("write");
+        let before = dir_fingerprint(run);
+
+        std::fs::write(run.join("parsed.json"), b"BBBB").expect("rewrite same length");
+        let after = dir_fingerprint(run);
+
+        assert_ne!(
+            before, after,
+            "a same-size in-place content change must change the fingerprint"
+        );
     }
 
     #[test]
