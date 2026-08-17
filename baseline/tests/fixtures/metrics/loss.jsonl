@@ -1,0 +1,5 @@
+{"step": 0, "loss": 2.7183, "probe_acc": 0.11, "note": "warmup"}
+{"step": 1, "loss": 2.1041, "probe_acc": 0.19, "note": "warmup"}
+{"step": 2, "loss": 1.6180, "probe_acc": 0.34}
+{"step": 3, "loss": 1.4142, "probe_acc": 0.51, "note": "lr decay"}
+{"step": 4, "loss": 1.2020, "probe_acc": 0.62, "spectral_err": 0.008}
