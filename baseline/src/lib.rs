@@ -8,6 +8,7 @@
 //! only possible one.
 #![warn(missing_docs)]
 
+pub mod actions;
 pub mod adapters;
 pub mod autonomy;
 pub mod freshness;
