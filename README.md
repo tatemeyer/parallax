@@ -9,12 +9,20 @@ TTUI is the first genuine external consumer, and the Plumb sub-project
 below is already running against it for real.
 
 **Status:** early. Sub-project #1 (Plumb) is implemented through Arc 5
-and in use; sub-project #2 has an approved plan and has not started.
-Everything else is specced or sketched, not built.
+and in use; sub-project #2 (Baseline) is implemented through Arc 7 —
+manifests, adapters, aggregated state, and control actions — and is the
+deliverable the cockpit will consume. Everything else is specced or
+sketched, not built.
 
 ## Repository layout
 
-- **`plumb/`** — sub-project #1, the only implemented component. A Claude
+- **`baseline/`** — sub-project #2, the platform core: manifest parsing
+  and validation, the normalized autonomy axes, the four adapter
+  families, aggregated cross-project state with per-source freshness,
+  and control actions behind a confirmation contract. Headless — it
+  never touches a terminal. See [`baseline/README.md`](baseline/README.md).
+- **`manifests/`** — the registered projects' `parallax.yaml` files.
+- **`plumb/`** — sub-project #1. A Claude
   Code plugin: capture a terminal UI, then judge it. See
   [`plumb/README.md`](plumb/README.md).
   - `plumb/capture/` — the Rust CLI: capture adapters, contact sheets,
@@ -51,7 +59,7 @@ Five sub-projects, each with its own spec → plan cycle.
 | # | Sub-project | Depends on | Status |
 |---|---|---|---|
 | 1 | `plumb` — perceptual verification | — | implemented through Arc 5 |
-| 2 | `parallax-baseline` — registry, manifest, transport | — | approved plan, not started |
+| 2 | `parallax-baseline` — registry, manifest, transport | — | implemented through Arc 7 |
 | 3 | Cockpit: observe | 2, `ttui` | sketched |
 | 4 | Model-Experiments visualization | 3 | sketched |
 | 5 | Cockpit: full control | 3 | sketched |
