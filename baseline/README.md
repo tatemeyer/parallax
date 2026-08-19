@@ -60,6 +60,47 @@ typo'd `verifications:` cannot silently vanish.
 branches on it, and a test asserts that positively: two manifests
 identical but for that field aggregate to identical state.
 
+## Getting from a directory to state
+
+Two calls, neither of which a frontend should have to write itself.
+
+**Which projects are registered** — an explicit list of roots, a
+registry file, or a scan of a directory holding sibling projects:
+
+```rust
+let registry = Registry::scan(Path::new("C:/Users/tatem/Dev"));
+// or: Registry::from_file(Path::new("~/.parallax/registry.yaml"))  <- caller expands the path
+```
+
+The library takes a path and never consults the environment — where the
+registry lives is frontend configuration. A project whose manifest is
+missing or invalid becomes a `RegistryError` in `failures()` and every
+other project still loads. The registry's root wins over the manifest's
+declared `root:`, because a manifest is checked into a repository that
+gets cloned to different paths while the registry is local
+configuration that knows where the clone actually is.
+
+**What serves each project** — the manifest's declared adapters:
+
+```rust
+let adapters = from_manifest(&project.manifest, &AdapterConfig::default());
+let state = aggregate_project(&project.manifest, &mut adapters, SystemTime::now());
+```
+
+`from_manifest_with` is the same function taking transport and runner
+factories, which is how a caller drives the identical translation
+against recorded fixtures instead of the live world. The translation is
+the manifest's meaning and lives in exactly one place: a frontend that
+translated manifests itself would own part of the schema.
+
+`VerificationAdapter::cost()` tells a scheduler which checks are safe to
+poll. The `plumb` adapter reads a `verdict.md` and reports `Read`; the
+`command` adapter runs what the manifest declared — for TTUI, `cargo
+clippy` and `cargo test` — and reports `Execute`. An adapter that
+overrides nothing is assumed to execute, because a reader misclassified
+as an executor merely refreshes less often than it could, while an
+executor misclassified as a reader spawns processes in a loop.
+
 ## The three autonomy axes
 
 Not one ladder. Each consumer repo collapses two or three independent
