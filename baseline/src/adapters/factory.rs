@@ -75,8 +75,8 @@ pub fn from_manifest_with<T, R>(
     runner: impl Fn() -> R,
 ) -> ProjectAdapters
 where
-    T: HttpTransport + 'static,
-    R: CommandRunner + 'static,
+    T: HttpTransport + Send + 'static,
+    R: CommandRunner + Send + 'static,
 {
     let manifest = validated.manifest();
     let mut adapters = ProjectAdapters::new();
