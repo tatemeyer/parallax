@@ -127,8 +127,9 @@ centre, a source-freshness footer across the bottom.
 
 Keys, resolved through TTUI's `InputBinder` so chords are available
 later without restructuring: `j`/`k` move within a pane, `Tab` cycles
-panes, `1`-`4` select a detail tab, `r` forces a refresh, `?` toggles
-help, `q` quits. Nothing else is bound, because every remaining verb
+panes, `1`-`4` select a detail tab, `r` forces a refresh of the reading
+sources, `c` runs the selected project's command checks and `C` runs
+every project's, `?` toggles help, `q` quits. Nothing else is bound, because every remaining verb
 belongs to sub-project #5 and binding it now would mean binding it
 twice.
 
@@ -180,11 +181,55 @@ Consequences, stated rather than discovered later:
   performs I/O on the UI thread is the rejected option wearing a
   different hat.
 
+### What the refresh cycle must never do
+
+One adapter in the set is not a reader. `CommandVerificationAdapter::
+check()` does not look up a check's standing — **it runs the check**.
+TTUI's manifest declares `cargo clippy --all-targets -- -D warnings` and
+`cargo test`, and `aggregate_project` calls every verification adapter
+unconditionally, so a cockpit that aggregates on a 30-second cadence
+would run both suites, for every registered project, forever — on the
+machine whose entire purpose is running agent sessions in those same
+repositories, from a background thread, with no visible cause.
+
+That is not a tuning problem to be solved with a longer interval. It is
+a category error: a cadence is the right shape for observing state and
+the wrong shape for producing it.
+
+So the rule is **the refresh cycle polls only sources that read**:
+
+| Source | On cadence | Why |
+|---|---|---|
+| work (`github`) | yes | one conditional GET, ETag-cheap |
+| verification (`plumb`) | yes | reads a `verdict.md` off disk |
+| artifacts | yes | stat and read |
+| sessions | yes | stat |
+| verification (`command`) | **no** | spawns a process and burns the machine |
+
+Command checks run when the operator asks: `c` runs the selected
+project's, `C` runs every registered project's. Until one has run, the
+pane says **not run this session** rather than showing a stale green —
+a check whose last result predates the code on disk is worse than no
+result, because it looks like an answer. Once one has run, its result
+carries the age of the run that produced it, which is what `Observed`
+already models and what the footer already displays.
+
+Running a build is not a repository mutation, so this stays inside the
+read-only non-goal below; it is called out because "read-only" would
+otherwise imply "harmless to run in a loop," and one of these adapters
+is not.
+
+This needs one thing baseline does not expose: a way to tell an
+executing check from a reading one without re-reading the manifest and
+duplicating its interpretation. That is folded into the amendment named
+in the next section, as `VerificationAdapter::cost()`.
+
 ### Two gaps in `parallax-baseline`, found by writing this document
 
 Writing the spec against the implemented API rather than against the
 plan surfaced two things baseline does not do, both of which every
-frontend would need, and neither of which belongs here:
+frontend would need, and neither of which belongs here (the cost hint
+above is a third, and rides along with them):
 
 1. **There is no adapter factory.** `ProjectAdapters` is built by hand —
    the aggregation tests and `aggregate_replay.rs` each construct one
@@ -329,6 +374,9 @@ The spec is satisfied when:
 - A failing adapter leaves every other pane populated, and its source
   appears in the footer as unavailable **with its reason**.
 - An adapter that blocks for 5 seconds does not delay a tick.
+- **A full refresh cycle spawns no process**, asserted with a
+  `CommandRunner` that panics if it is called at all: the cadence must
+  be provably incapable of running `cargo test`.
 - No code path in this crate calls anything in
   `parallax_baseline::actions`, asserted by a test over the crate's own
   source — the read-only claim is checkable, so it gets checked.
