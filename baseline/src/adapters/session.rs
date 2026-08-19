@@ -3,7 +3,7 @@
 //! filesystem scan (Task 17).
 
 use super::{AdapterError, ProjectContext};
-use crate::adapters::artifact::scan_glob;
+use crate::adapters::artifact::{outermost_dirs, scan_glob};
 use crate::freshness::Observed;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -84,10 +84,7 @@ impl SessionAdapter for FilesystemSessionAdapter {
         now: SystemTime,
     ) -> Result<Observed<Vec<Session>>, AdapterError> {
         let mut sessions = Vec::new();
-        for path in scan_glob(&ctx.root, &self.watch)? {
-            if !path.is_dir() {
-                continue;
-            }
+        for path in outermost_dirs(scan_glob(&ctx.root, &self.watch)?) {
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -171,6 +168,21 @@ mod tests {
             sessions[0].last_activity >= inner_mtime,
             "activity must reflect the deepest file, not the directory"
         );
+    }
+
+    /// The same exposure the capture adapter has: a `**` watch matches
+    /// at every depth, and a worktree is full of directories. A session
+    /// is the worktree, not every folder inside it.
+    #[test]
+    fn a_directory_inside_a_session_is_not_a_session_of_its_own() {
+        let dir = tree(&[".claude/worktrees/widget-audit/src/widgets/list.rs"]);
+        let mut a = FilesystemSessionAdapter::new(".claude/worktrees/**");
+        let sessions = a
+            .scan(&ProjectContext::new("ttui", dir.path()), at(0))
+            .unwrap()
+            .value;
+        assert_eq!(sessions.len(), 1, "one worktree, not one per folder");
+        assert_eq!(sessions[0].name, "widget-audit");
     }
 
     #[test]
