@@ -8,6 +8,7 @@
 
 pub mod artifacts;
 pub mod model;
+pub mod render;
 pub mod sessions;
 pub mod status;
 pub mod verification;
