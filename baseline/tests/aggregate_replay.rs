@@ -168,7 +168,7 @@ fn ttui_aggregates_every_declared_family_from_fixtures() {
         "no source failed: {:?}",
         state.degradations
     );
-    assert_eq!(state.work.as_ref().unwrap().value.items.len(), 5);
+    assert_eq!(state.work.as_ref().unwrap().value.items.len(), 6);
     assert_eq!(state.verification.len(), 3);
     assert_eq!(
         state.verification[0].value.outcome,
@@ -331,7 +331,7 @@ fn a_work_only_registration_still_produces_a_valid_project_state() {
     adapters.work = Some(Box::new(GithubWorkAdapter::new(github_transport())));
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
-    assert_eq!(state.work.as_ref().unwrap().value.items.len(), 5);
+    assert_eq!(state.work.as_ref().unwrap().value.items.len(), 6);
     assert!(state.verification.is_empty());
     assert!(state.artifacts.is_empty());
     assert!(state.sessions.is_none());
