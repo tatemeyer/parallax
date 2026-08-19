@@ -60,7 +60,7 @@ Five sub-projects, each with its own spec → plan cycle.
 |---|---|---|---|
 | 1 | `plumb` — perceptual verification | — | implemented through Arc 5 |
 | 2 | `parallax-baseline` — registry, manifest, transport | — | implemented through Arc 7 |
-| 3 | Cockpit: observe | 2, `ttui` | sketched |
+| 3 | Cockpit: observe | 2, `ttui` | spec proposed, awaiting sign-off |
 | 4 | Model-Experiments visualization | 3 | sketched |
 | 5 | Cockpit: full control | 3 | sketched |
 
