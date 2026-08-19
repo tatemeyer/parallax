@@ -33,6 +33,21 @@ pub struct VerificationStatus {
     pub detail: Option<String>,
 }
 
+/// What calling [`VerificationAdapter::check`] costs.
+///
+/// The two built-ins sit on opposite sides of this: the `plumb` adapter
+/// reads a `verdict.md` off disk, and the `command` adapter runs
+/// whatever the manifest declared — for TTUI, `cargo clippy` and `cargo
+/// test`. A caller that polls on a cadence needs to tell them apart
+/// before it schedules anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckCost {
+    /// Reads state something else produced. Safe on any cadence.
+    Read,
+    /// Produces the state by running something. Operator-initiated.
+    Execute,
+}
+
 /// A source of verification outcomes.
 pub trait VerificationAdapter {
     /// A short label naming this source, for degradation reporting.
@@ -44,6 +59,17 @@ pub trait VerificationAdapter {
         ctx: &ProjectContext,
         now: SystemTime,
     ) -> Result<Observed<VerificationStatus>, AdapterError>;
+
+    /// What calling `check` costs.
+    ///
+    /// Defaults to [`CheckCost::Execute`]: the safe assumption about an
+    /// adapter this crate has never seen is that calling it *does*
+    /// something. A reader misclassified as an executor merely refreshes
+    /// less often than it could; an executor misclassified as a reader
+    /// spawns processes in a loop.
+    fn cost(&self) -> CheckCost {
+        CheckCost::Execute
+    }
 }
 
 /// What running a command produced.
@@ -244,6 +270,10 @@ impl VerificationAdapter for PlumbVerificationAdapter {
         format!("verification:plumb:{}", self.kind)
     }
 
+    fn cost(&self) -> CheckCost {
+        CheckCost::Read
+    }
+
     fn check(
         &mut self,
         _ctx: &ProjectContext,
@@ -375,6 +405,46 @@ mod command_tests {
             observed.freshness(at(9999)),
             crate::freshness::Freshness::Live
         );
+    }
+
+    #[test]
+    fn a_command_check_costs_a_process() {
+        let a = CommandVerificationAdapter::new("tests", "cargo test", ScriptedRunner::new());
+        assert_eq!(a.cost(), CheckCost::Execute);
+    }
+
+    #[test]
+    fn a_plumb_check_only_reads() {
+        let a = PlumbVerificationAdapter::new("perceptual", "/tmp/runs");
+        assert_eq!(a.cost(), CheckCost::Read);
+    }
+
+    /// An adapter defined outside this crate that overrides nothing is
+    /// assumed to cost something. A scheduler that polls it on a cadence
+    /// would be spawning whatever it spawns, forever.
+    #[test]
+    fn an_adapter_that_says_nothing_is_assumed_to_execute() {
+        struct Unknown;
+        impl VerificationAdapter for Unknown {
+            fn source_name(&self) -> String {
+                "verification:unknown".into()
+            }
+            fn check(
+                &mut self,
+                _ctx: &ProjectContext,
+                now: SystemTime,
+            ) -> Result<Observed<VerificationStatus>, AdapterError> {
+                Ok(Observed::watched(
+                    VerificationStatus {
+                        kind: "unknown".into(),
+                        outcome: VerificationOutcome::NotRun,
+                        detail: None,
+                    },
+                    now,
+                ))
+            }
+        }
+        assert_eq!(Unknown.cost(), CheckCost::Execute);
     }
 
     #[test]
