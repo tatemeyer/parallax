@@ -11,9 +11,7 @@ use std::path::{Path, PathBuf};
 
 fn manifest(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("manifests")
+        .join("tests/fixtures/manifests")
         .join(name)
 }
 

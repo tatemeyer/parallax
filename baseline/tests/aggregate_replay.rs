@@ -8,7 +8,7 @@ use parallax_baseline::adapters::verification::{
     CommandOutput, ScriptedRunner, VerificationOutcome,
 };
 use parallax_baseline::adapters::work::{check_runs_url, issues_url, pulls_url, GithubWorkAdapter};
-use parallax_baseline::autonomy::{Implement, Merge, Readiness};
+use parallax_baseline::autonomy::{no_claim, Implement, Merge, Readiness};
 use parallax_baseline::freshness::Freshness;
 use parallax_baseline::manifest::parse_manifest_file;
 use parallax_baseline::state::{aggregate, aggregate_project, ProjectAdapters};
@@ -29,7 +29,7 @@ fn fixture(relative: &str) -> PathBuf {
 }
 
 fn manifest(name: &str) -> PathBuf {
-    crate_dir().parent().unwrap().join("manifests").join(name)
+    crate_dir().join("tests/fixtures/manifests").join(name)
 }
 
 fn at(secs: u64) -> SystemTime {
@@ -151,7 +151,7 @@ fn ttui_adapters(validated: &Validated) -> ProjectAdapters {
 #[test]
 fn ttui_aggregates_every_declared_family_from_fixtures() {
     let tree = ttui_tree();
-    let validated = load_rooted("ttui.yaml", tree.path());
+    let validated = load_rooted("tiers.yaml", tree.path());
     let mut adapters = ttui_adapters(&validated);
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
@@ -184,7 +184,7 @@ fn ttui_aggregates_every_declared_family_from_fixtures() {
 #[test]
 fn ttui_work_items_project_onto_the_normalized_axes() {
     let tree = ttui_tree();
-    let validated = load_rooted("ttui.yaml", tree.path());
+    let validated = load_rooted("tiers.yaml", tree.path());
     let mut adapters = ttui_adapters(&validated);
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
@@ -220,7 +220,7 @@ fn ttui_work_items_project_onto_the_normalized_axes() {
 #[test]
 fn a_label_ttui_does_not_declare_is_reported_as_unmapped() {
     let tree = ttui_tree();
-    let validated = load_rooted("ttui.yaml", tree.path());
+    let validated = load_rooted("tiers.yaml", tree.path());
     let mut adapters = ttui_adapters(&validated);
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
@@ -237,7 +237,7 @@ fn a_label_ttui_does_not_declare_is_reported_as_unmapped() {
 #[test]
 fn ttui_capture_artifacts_carry_the_run_s_verdict() {
     let tree = ttui_tree();
-    let validated = load_rooted("ttui.yaml", tree.path());
+    let validated = load_rooted("tiers.yaml", tree.path());
     let mut adapters = ttui_adapters(&validated);
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
@@ -255,7 +255,7 @@ fn ttui_capture_artifacts_carry_the_run_s_verdict() {
 #[test]
 fn ttui_source_freshness_distinguishes_the_polled_feed_from_the_watched_ones() {
     let tree = ttui_tree();
-    let validated = load_rooted("ttui.yaml", tree.path());
+    let validated = load_rooted("tiers.yaml", tree.path());
     let mut adapters = ttui_adapters(&validated);
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
@@ -312,7 +312,7 @@ fn model_experiments_aggregates_to_a_reduced_view_with_no_session_source() {
 #[test]
 fn a_work_only_registration_still_produces_a_valid_project_state() {
     let tree = tempfile::tempdir().unwrap();
-    let mut parsed = parse_manifest_file(&manifest("ttui.yaml")).unwrap();
+    let mut parsed = parse_manifest_file(&manifest("tiers.yaml")).unwrap();
     parsed.project.root = Some(tree.path().to_path_buf());
     parsed.verification.clear();
     parsed.artifacts.clear();
@@ -348,7 +348,7 @@ fn both_projects_aggregate_into_one_platform_state() {
 
     let mut inputs = vec![
         {
-            let v = load_rooted("ttui.yaml", ttui.path());
+            let v = load_rooted("tiers.yaml", ttui.path());
             let a = ttui_adapters(&v);
             (v, a)
         },
@@ -361,7 +361,7 @@ fn both_projects_aggregate_into_one_platform_state() {
 
     assert_eq!(platform.projects.len(), 2);
     assert_eq!(
-        platform.project("ttui").unwrap().methodology.as_deref(),
+        platform.project("tiers").unwrap().methodology.as_deref(),
         Some("methodology-first")
     );
     assert_eq!(
@@ -412,5 +412,39 @@ fn methodology_changes_nothing_about_the_aggregated_state() {
         build(a),
         build(b),
         "methodology must not reach any behaviour"
+    );
+}
+
+/// TTUI's own `parallax.yaml` declares no `autonomy_map`, because its
+/// tiers come from a plan's Slice/Task tags rather than from issue
+/// labels. Aggregation must therefore report every label as unmapped
+/// and claim nothing — the honest reading of Parallax issue #16, and
+/// the thing a cockpit renders as em dashes rather than as a default.
+#[test]
+fn ttuis_real_manifest_claims_nothing_and_reports_every_label_unmapped() {
+    let tree = ttui_tree();
+    let validated = load_rooted("ttui.yaml", tree.path());
+    let mut adapters = ProjectAdapters::new();
+    adapters.work = Some(Box::new(GithubWorkAdapter::new(github_transport())));
+    let state = aggregate_project(&validated, &mut adapters, at(0));
+
+    assert!(
+        validated
+            .manifest()
+            .work
+            .as_ref()
+            .unwrap()
+            .autonomy_map
+            .is_empty(),
+        "TTUI declares no autonomy map"
+    );
+    for item in &state.autonomy {
+        assert_eq!(item.resolution.autonomy, no_claim(), "#{}", item.number);
+        assert!(item.resolution.matched.is_empty());
+    }
+    assert!(
+        state.unmapped_labels.contains(&"semver:patch".to_string()),
+        "the labels it does carry are reported rather than dropped: {:?}",
+        state.unmapped_labels
     );
 }

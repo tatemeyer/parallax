@@ -16,8 +16,13 @@ rather than linking the crate that wrote it. A test asserts that
 
 ## The manifest
 
-A project joins the platform by dropping a `parallax.yaml` in its root.
-`manifests/ttui.yaml`, the worked example:
+A project joins the platform by dropping a `parallax.yaml` in its root —
+which is where they live: `tatemeyer/ttui`, `tatemeyer/SESH`, and
+`tatemeyer/Model-Experiments` each carry their own. The copies under
+`baseline/tests/fixtures/manifests/` are recorded for testing and will
+drift; the file in the project is the one that counts.
+
+A worked example, close to what TTUI carries:
 
 ```yaml
 apiVersion: parallax/v1

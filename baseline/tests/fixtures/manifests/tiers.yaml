@@ -1,6 +1,14 @@
+# NOT any project's manifest. This encodes the platform spec's
+# projection table — the three tiers TTUI's git-github-standards.md
+# defines — so the autonomy vocabulary keeps end-to-end coverage now
+# that the real manifests live in the projects they describe.
+#
+# TTUI's own parallax.yaml deliberately declares no autonomy_map: the
+# tiers are assigned from a plan's Slice/Task tags, not from issue
+# labels, and `label:direct` matches zero items there (Parallax #16).
 apiVersion: parallax/v1
 project:
-  name: ttui
+  name: tiers
   root: <projects-root>/TTUI
   language: rust
   methodology: methodology-first     # informational only

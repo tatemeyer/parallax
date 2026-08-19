@@ -1,0 +1,45 @@
+# How Model-Experiments joins the Parallax platform.
+#
+# Read by `parallax-baseline`, which aggregates every registered
+# project's work, verification, artifacts, and agent sessions into one
+# view. See github.com/tatemeyer/parallax.
+#
+# `root:` is deliberately absent: the registry knows where this clone
+# actually is, and a checked-in absolute path would be wrong on every
+# machine but one.
+apiVersion: parallax/v1
+project:
+  name: model-experiments
+  language: python
+  methodology: outcome-first     # informational only; nothing branches on it
+work:
+  adapter: github
+  repo: tatemeyer/Model-Experiments
+  # These are real labels, applied at triage — which is why this half of
+  # the platform's projection table has always worked.
+  autonomy_map:
+    "autonomy:safe":   { implement: agent, merge: on-checks }
+    "autonomy:review": { implement: agent, merge: human-approval }
+    "autonomy:human":  { implement: human-only }
+    "needs-intent":    { readiness: needs-intent }
+verification:
+  # CI's own steps, in the platform's vocabulary.
+  - kind: lint
+    adapter: command
+    command: uvx ruff check .
+  - kind: tests
+    adapter: command
+    command: uv run pytest
+  # No `perceptual` check: this repository has no `.plumb/`, so a Plumb
+  # entry would report "no completed run" forever. It belongs here the
+  # day mx-viz output is captured, and not before — a declared check
+  # nothing backs is worse than an absent one.
+artifacts:
+  # Both feeds watch produced files, which are gitignored by design.
+  # An empty scan is legitimate; it means nothing has been run here yet.
+  - kind: figure
+    watch: projects/*/results/**/*.png
+  - kind: metrics
+    adapter: jsonl
+    watch: projects/*/results/**/*.jsonl
+# No session feed: this repository has no `.claude/worktrees/`.

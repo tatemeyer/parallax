@@ -11,11 +11,9 @@ use parallax_baseline::validate::Validated;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-fn manifest_source(name: &str) -> PathBuf {
+fn manifest(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("manifests")
+        .join("tests/fixtures/manifests")
         .join(name)
 }
 
@@ -28,13 +26,13 @@ fn at(secs: u64) -> SystemTime {
 /// project at all.
 fn projects_tree() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-    for (folder, manifest) in [
+    for (folder, fixture) in [
         ("TTUI", "ttui.yaml"),
         ("Model-Experiments", "model-experiments.yaml"),
     ] {
         let root = dir.path().join(folder);
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::copy(manifest_source(manifest), root.join("parallax.yaml")).unwrap();
+        std::fs::copy(manifest(fixture), root.join("parallax.yaml")).unwrap();
     }
     let broken = dir.path().join("Broken");
     std::fs::create_dir_all(&broken).unwrap();

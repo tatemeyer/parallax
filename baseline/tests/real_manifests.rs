@@ -1,17 +1,21 @@
-//! The two real consumers' manifests must parse, validate, and project
-//! their native autonomy labels onto the normalized axes.
+//! Manifests must parse, validate, and project their native autonomy
+//! labels onto the normalized axes.
+//!
+//! These are **fixtures, not the live files**. Each project now carries
+//! its own `parallax.yaml` — that is what "a project joins the platform
+//! by dropping one in its root" means — so what is checked here is a
+//! recorded copy, and `tiers.yaml` is not any project's manifest at all:
+//! it encodes the spec's projection table so the vocabulary keeps
+//! end-to-end coverage.
 
 use parallax_baseline::autonomy::{project, Implement, Merge, Readiness};
 use parallax_baseline::manifest::{parse_manifest_file, ArtifactKind, VerificationAdapterKind};
 use parallax_baseline::validate::{validate, Family, Validated};
 use std::path::{Path, PathBuf};
 
-/// `manifests/` sits at the workspace root, one level above this crate.
 fn manifest_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("baseline/ has a parent")
-        .join("manifests")
+        .join("tests/fixtures/manifests")
         .join(name)
 }
 
@@ -21,11 +25,11 @@ fn load(name: &str) -> Validated {
 }
 
 #[test]
-fn ttui_manifest_parses_and_validates() {
-    let v = load("ttui.yaml");
+fn the_tiers_manifest_parses_and_validates() {
+    let v = load("tiers.yaml");
     let m = v.manifest();
     assert_eq!(m.api_version.as_deref(), Some("parallax/v1"));
-    assert_eq!(m.project.name, "ttui");
+    assert_eq!(m.project.name, "tiers");
     assert_eq!(m.project.language.as_deref(), Some("rust"));
     assert_eq!(m.project.methodology.as_deref(), Some("methodology-first"));
     assert_eq!(m.work.as_ref().unwrap().repo, "tatemeyer/ttui");
@@ -39,13 +43,13 @@ fn ttui_manifest_parses_and_validates() {
         Family::Artifact,
         Family::Session,
     ] {
-        assert!(v.declares(family), "ttui declares all four families");
+        assert!(v.declares(family), "the fixture declares all four families");
     }
 }
 
 #[test]
-fn ttui_labels_project_onto_the_spec_s_table() {
-    let v = load("ttui.yaml");
+fn the_three_tiers_project_onto_the_spec_s_table() {
+    let v = load("tiers.yaml");
     let map = &v.manifest().work.as_ref().unwrap().autonomy_map;
 
     let direct = project(map, "direct").expect("direct is declared");
@@ -112,7 +116,7 @@ fn model_experiments_labels_project_onto_the_spec_s_table() {
 /// against the real files rather than test fixtures.
 #[test]
 fn the_two_asymmetries_hold_for_the_real_manifests() {
-    let ttui = load("ttui.yaml");
+    let ttui = load("tiers.yaml");
     let ttui_map = &ttui.manifest().work.as_ref().unwrap().autonomy_map;
     assert!(
         ttui_map
