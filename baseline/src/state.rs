@@ -16,16 +16,24 @@ use std::time::SystemTime;
 
 /// The adapters serving one project. Every family is optional, because
 /// partial support is normal.
+///
+/// **Every adapter is `Send`.** A frontend that polls on its UI thread
+/// freezes for the length of every fetch, so the only correct shape is a
+/// worker thread that owns the adapters — which requires them to be able
+/// to leave the thread that built them. Without the bound this whole
+/// struct is stuck wherever it was constructed, and a headless core that
+/// forces its callers to do I/O on their render thread is not headless
+/// in any useful sense.
 #[derive(Default)]
 pub struct ProjectAdapters {
     /// The work feed, when declared.
-    pub work: Option<Box<dyn WorkAdapter>>,
+    pub work: Option<Box<dyn WorkAdapter + Send>>,
     /// One adapter per declared verification check.
-    pub verification: Vec<Box<dyn VerificationAdapter>>,
+    pub verification: Vec<Box<dyn VerificationAdapter + Send>>,
     /// One adapter per declared artifact feed.
-    pub artifacts: Vec<Box<dyn ArtifactAdapter>>,
+    pub artifacts: Vec<Box<dyn ArtifactAdapter + Send>>,
     /// The session feed, when declared.
-    pub sessions: Option<Box<dyn SessionAdapter>>,
+    pub sessions: Option<Box<dyn SessionAdapter + Send>>,
 }
 
 impl ProjectAdapters {
@@ -364,6 +372,27 @@ work:
 
     pub(super) fn ttui() -> crate::validate::Validated {
         validate(parse_manifest(TTUI_YAML).unwrap()).unwrap()
+    }
+
+    /// The bound that lets a frontend own its adapters on a worker
+    /// thread. Without it, every caller polls on whatever thread built
+    /// them — which for a TUI is the one drawing frames.
+    #[test]
+    fn a_projects_adapters_can_leave_the_thread_that_built_them() {
+        fn assert_send<T: Send>() {}
+        assert_send::<ProjectAdapters>();
+
+        // And they really do move: this is the shape every frontend uses.
+        let mut adapters = ProjectAdapters::new();
+        adapters.work = Some(Box::new(StubWork {
+            result: Some(WorkSnapshot { items: vec![] }),
+        }));
+        let validated = ttui();
+        let handle = std::thread::spawn(move || {
+            let mut adapters = adapters;
+            aggregate_project(&validated, &mut adapters, at(0)).name
+        });
+        assert_eq!(handle.join().unwrap(), "ttui");
     }
 
     #[test]
