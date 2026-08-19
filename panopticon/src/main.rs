@@ -27,7 +27,8 @@ OPTIONS:
     --registry <file>      Load the project roots a registry file lists.
     --fixtures <dir>       Render recorded state with a frozen clock.
                            Deterministic: the same frames every run.
-    --github-token <tok>   Authenticate the GitHub work adapter.
+    --github-token <tok>   Authenticate the GitHub work adapter. Falls
+                           back to $GITHUB_TOKEN, then $GH_TOKEN.
     -h, --help             This.
 
 KEYS:
@@ -83,6 +84,15 @@ fn main() -> ExitCode {
         }
     }
 
+    // Credential discovery is frontend work: `parallax-baseline` takes a
+    // token and never reads the environment, so that it runs identically
+    // in a test. Somebody has to look, though — without it a private
+    // repository degrades to a 404 and the cockpit reports a project it
+    // simply is not allowed to see.
+    let token = token
+        .or_else(|| non_empty("GITHUB_TOKEN"))
+        .or_else(|| non_empty("GH_TOKEN"));
+
     let (projects, clock) = match load(source, token) {
         Ok(loaded) => loaded,
         Err(problem) => return fail(&problem),
@@ -137,6 +147,11 @@ fn load(
         .collect();
 
     Ok((projects, Clock::System))
+}
+
+/// An environment variable, when it is set to something.
+fn non_empty(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
 fn fail(problem: &str) -> ExitCode {
