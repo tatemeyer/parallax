@@ -6,6 +6,7 @@
 #![warn(missing_docs)]
 
 pub mod app;
+pub mod bell;
 pub mod fixtures;
 pub mod keys;
 pub mod refresh;

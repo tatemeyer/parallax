@@ -64,6 +64,13 @@ pub struct Frame<'a> {
     pub now: SystemTime,
     /// Which row of the detail pane is selected.
     pub detail_selected: usize,
+    /// Whether the Cloister Bell is currently ringing.
+    ///
+    /// Presentation only, and deliberately meagre: a line in the footer
+    /// and nothing else. It never opens a modal and never swallows a
+    /// keystroke, because the operator has to keep working while
+    /// something is on fire.
+    pub alarm: bool,
 }
 
 impl Frame<'_> {
@@ -254,7 +261,12 @@ fn session_lines(frame: &Frame<'_>, project: &ProjectState) -> Vec<String> {
 /// trustworthy, so it never scrolls and never drops a row silently — it
 /// says how many it could not fit.
 fn render_footer(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer) {
-    let inner = Block::new().title("SOURCES").theme(theme).render(area, buf);
+    let title = if frame.alarm {
+        "SOURCES  ** BLOCKER **"
+    } else {
+        "SOURCES"
+    };
+    let inner = Block::new().title(title).theme(theme).render(area, buf);
     let Some(project) = frame.project() else {
         return;
     };

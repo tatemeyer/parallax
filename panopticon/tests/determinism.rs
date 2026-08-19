@@ -58,6 +58,7 @@ fn draw(platform: &PlatformState, tab: Tab, w: u16, h: u16, now: std::time::Syst
         pending_checks: &["lint".to_string(), "tests".to_string()],
         now,
         detail_selected: 0,
+        alarm: false,
     };
     let mut buf = Buffer::new(w, h);
     render(
