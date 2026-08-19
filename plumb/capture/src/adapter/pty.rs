@@ -213,6 +213,14 @@ impl Session {
         for a in args {
             cmd.arg(a);
         }
+        // Without this the child starts wherever the pty crate decides,
+        // so a scenario's relative paths resolve against a directory
+        // nobody chose. Every other path in a `.plumb/config.yaml` is
+        // relative to the project root, and the operator ran `plumb`
+        // from it — the captured program should see the same tree.
+        if let Ok(cwd) = std::env::current_dir() {
+            cmd.cwd(cwd);
+        }
 
         let child = pair
             .slave
