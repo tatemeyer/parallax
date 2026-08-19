@@ -1,0 +1,9 @@
+{
+  "total_count": 4,
+  "check_runs": [
+    { "name": "build", "status": "completed", "conclusion": "success" },
+    { "name": "test", "status": "completed", "conclusion": "success" },
+    { "name": "fmt", "status": "completed", "conclusion": "success" },
+    { "name": "clippy", "status": "in_progress", "conclusion": null }
+  ]
+}

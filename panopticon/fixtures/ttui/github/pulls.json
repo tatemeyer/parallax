@@ -1,0 +1,50 @@
+[
+  {
+    "number": 139,
+    "title": "fix(core): let on_tick trigger app exit",
+    "state": "closed",
+    "draft": false,
+    "merged_at": "2026-08-13T09:14:02Z",
+    "html_url": "https://github.com/tatemeyer/ttui/pull/139",
+    "updated_at": "2026-08-13T09:14:02Z",
+    "labels": [
+      {
+        "name": "semver:patch"
+      }
+    ],
+    "head": {
+      "sha": "9f1e2d3c4b5a60718293a4b5c6d7e8f90a1b2c3d"
+    }
+  },
+  {
+    "number": 142,
+    "title": "feat(widgets): add a Gauge widget",
+    "state": "open",
+    "draft": false,
+    "html_url": "https://github.com/tatemeyer/ttui/pull/142",
+    "updated_at": "2026-08-14T11:02:00Z",
+    "labels": [
+      {
+        "name": "gated"
+      },
+      {
+        "name": "semver:minor"
+      }
+    ],
+    "head": {
+      "sha": "1a7d51c9f0e2b3a4d5c6e7f8091a2b3c4d5e6f70"
+    }
+  },
+  {
+    "number": 143,
+    "title": "chore: bump the MSRV",
+    "state": "open",
+    "draft": true,
+    "html_url": "https://github.com/tatemeyer/ttui/pull/143",
+    "updated_at": "2026-08-14T11:30:00Z",
+    "labels": [],
+    "head": {
+      "sha": "0b1c2d3e4f5061728394a5b6c7d8e9f0a1b2c3d4"
+    }
+  }
+]

@@ -17,6 +17,8 @@ ttui = "1"
 # The event type TTUI's App trait takes; same version ttui uses.
 crossterm = "0.27"
 parallax-baseline = { path = "../baseline" }
+# Reading recorded GitHub responses to key check-runs by head SHA.
+serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
