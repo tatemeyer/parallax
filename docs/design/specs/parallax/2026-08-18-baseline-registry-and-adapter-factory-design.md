@@ -20,7 +20,10 @@ guesses.
 ## Context / Motivation
 
 The master design describes sub-project #2 as "**registry**, manifest,
-transport." Two of those three shipped.
+transport." Two of those three shipped. A third gap — no way to tell an
+executing verification check from a reading one — turned up while
+writing the cockpit's refresh model and is folded in here, because it is
+one method on a trait this document already touches.
 
 **There is no registry.** `manifest::parse_manifest_file` reads *a*
 manifest from *a* path. Nothing in the crate answers "which projects are
@@ -180,6 +183,59 @@ Two details the table hides, both real decisions:
    private-constructor discipline `Validated` and `Authorized` already
    use twice, applied a third time.
 
+### Telling an executing check from a reading one
+
+A third gap, found the same way and folded in here because it is one
+method on a trait the factory already constructs.
+
+`VerificationAdapter::check()` means two different things depending on
+the implementation. `PlumbVerificationAdapter` reads a `verdict.md` off
+disk — cheap, idempotent, safe on any cadence. `CommandVerificationAdapter`
+**runs the command**, and TTUI's manifest declares `cargo clippy
+--all-targets -- -D warnings` and `cargo test`. `aggregate_project`
+calls every verification adapter unconditionally, so any caller that
+aggregates on a timer runs both suites, for every registered project,
+forever.
+
+Nothing in the current API lets a scheduler tell those two apart. A
+frontend could re-read the manifest and branch on
+`VerificationAdapterKind`, which is precisely the duplicated
+interpretation the factory above exists to prevent.
+
+```rust
+pub enum CheckCost {
+    /// Reads state that something else produced. Safe on any cadence.
+    Read,
+    /// Produces the state by running something. Operator-initiated.
+    Execute,
+}
+
+pub trait VerificationAdapter {
+    fn source_name(&self) -> String;
+    fn check(&mut self, ctx: &ProjectContext, now: SystemTime)
+        -> Result<Observed<VerificationStatus>, AdapterError>;
+
+    /// What calling `check` costs. Defaults to `Execute`: the safe
+    /// assumption about an adapter this crate has never seen is that
+    /// calling it does something.
+    fn cost(&self) -> CheckCost {
+        CheckCost::Execute
+    }
+}
+```
+
+`PlumbVerificationAdapter` overrides to `Read`; `CommandVerificationAdapter`
+takes the default. The default is `Execute` rather than `Read` because
+the failure modes are not symmetric: a reading adapter misclassified as
+executing merely refreshes less often than it could, while an executing
+adapter misclassified as reading spawns processes in a loop.
+
+**`aggregate_project` does not change.** It still calls every adapter it
+is given, because which adapters to give it is the caller's policy —
+the same separation that keeps `now` injected rather than sampled. A
+scheduler partitions its own `ProjectAdapters` by `cost()` and
+aggregates the reading set on a timer.
+
 ### Why both go in baseline rather than in the cockpit
 
 The manifest's meaning is a platform contract. `adapter: github` means
@@ -211,6 +267,9 @@ explicitly kept possible — would need the identical answer.
 
 ## Testing
 
+- **`cost()` is asserted per built-in**: the `plumb` adapter reads, the
+  `command` adapter executes, and an adapter defined outside this crate
+  that overrides nothing is treated as executing.
 - **The translation table above is a test per row**, asserted through
   each adapter's `source_name()` on the constructed `ProjectAdapters`,
   so a mis-wired family fails loudly rather than silently producing an
@@ -276,10 +335,14 @@ parser that already exists.
 2. **`<config parent>/runs`, or an explicit `runs:` key now?** The
    convention costs nothing today and one manifest change later; the
    key costs a schema field with no current user.
-3. **Should `from_manifest_with` take factories or a single builder
+3. **Is `CheckCost` two variants or three?** A third — `Read` that may
+   be expensive, e.g. a verdict directory on a network share — is
+   imaginable and is not proposed, because a scheduler cannot do
+   anything useful with it that a timeout does not already do better.
+4. **Should `from_manifest_with` take factories or a single builder
    trait?** Factories are simpler and match how the adapters are
    already constructed; a trait would be more extensible and is
    probably premature.
-4. **Does this land as one plan or two?** They are independent — the
+5. **Does this land as one plan or two?** They are independent — the
    factory is useful without the registry and vice versa — but they
    share the same consumer and would review naturally together.
