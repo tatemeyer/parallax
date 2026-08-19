@@ -73,10 +73,27 @@ fn github_transport() -> FixtureTransport {
 }
 
 /// A TTUI-shaped tree: one completed Plumb run and two worktrees.
+///
+/// The run carries the `lenses/` and `merge/` subdirectories a real run
+/// holds per Plumb's evidence contract, so the capture feed is exercised
+/// against the layout it will actually meet rather than a flat one.
 fn ttui_tree() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let run = dir.path().join(".plumb/runs/20260814T112200Z");
-    std::fs::create_dir_all(&run).unwrap();
+    std::fs::create_dir_all(run.join("lenses/breakage.omnitrix-dial-rotate")).unwrap();
+    std::fs::create_dir_all(run.join("merge")).unwrap();
+    std::fs::write(
+        run.join("lenses/breakage.omnitrix-dial-rotate/prompt.txt"),
+        "as dispatched
+",
+    )
+    .unwrap();
+    std::fs::write(
+        run.join("merge/survivors.json"),
+        "[]
+",
+    )
+    .unwrap();
     std::fs::copy(fixture("plumb/verdict-no-go.md"), run.join("verdict.md")).unwrap();
     for worktree in ["parallax-baseline", "widget-audit"] {
         let path = dir

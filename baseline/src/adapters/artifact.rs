@@ -101,6 +101,34 @@ pub fn scan_glob(root: &Path, pattern: &str) -> Result<Vec<PathBuf>, AdapterErro
     Ok(found)
 }
 
+/// The outermost directories among `paths`, dropping any that sits
+/// inside another match.
+///
+/// A `**` watch matches at every depth, and a real Plumb run directory
+/// holds `lenses/<lens>.<scenario>/` and `merge/` subdirectories per the
+/// evidence contract. Without this, one completed run reads as several:
+/// the run itself plus one phantom run per nested directory, each with
+/// no verdict of its own.
+///
+/// Relies on `scan_glob` returning sorted paths, so a parent always
+/// precedes its children.
+pub(crate) fn outermost_dirs(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for path in paths {
+        if !path.is_dir() {
+            continue;
+        }
+        // `Path::starts_with` compares whole components, so a sibling
+        // named `20260814T112200Z-retry` is not mistaken for a child of
+        // `20260814T112200Z`.
+        if roots.iter().any(|root| path.starts_with(root)) {
+            continue;
+        }
+        roots.push(path);
+    }
+    roots
+}
+
 /// The filesystem modification time of a path, or the Unix epoch when
 /// the filesystem does not report one.
 fn modified_at(path: &Path) -> SystemTime {
@@ -179,10 +207,7 @@ impl ArtifactAdapter for CaptureArtifactAdapter {
         now: SystemTime,
     ) -> Result<Observed<Vec<Artifact>>, AdapterError> {
         let mut artifacts = Vec::new();
-        for path in scan_glob(&ctx.root, &self.watch)? {
-            if !path.is_dir() {
-                continue;
-            }
+        for path in outermost_dirs(scan_glob(&ctx.root, &self.watch)?) {
             let run_id = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -383,6 +408,40 @@ mod scan_tests {
         );
         assert_eq!(
             artifacts[1].detail,
+            ArtifactDetail::Capture {
+                run_id: "20260814T112200Z".into(),
+                outcome: crate::adapters::verification::VerificationOutcome::Fail,
+            }
+        );
+    }
+
+    /// A real Plumb run directory holds `lenses/<lens>.<scenario>/` and
+    /// `merge/` subdirectories (the evidence contract), and the manifest's
+    /// declared `.plumb/runs/**` matches a directory at any depth. Each of
+    /// those subdirectories would otherwise be reported as its own run —
+    /// one completed capture reading as five, four of them phantom.
+    #[test]
+    fn a_runs_subdirectory_is_part_of_its_run_rather_than_a_run_of_its_own() {
+        let dir = tree(&[
+            (
+                ".plumb/runs/20260814T112200Z/verdict.md",
+                "# run 20260814T112200Z — NO-GO
+",
+            ),
+            (
+                ".plumb/runs/20260814T112200Z/lenses/breakage.omnitrix/prompt.txt",
+                "...",
+            ),
+            (".plumb/runs/20260814T112200Z/merge/survivors.json", "[]"),
+        ]);
+        let mut a = CaptureArtifactAdapter::new(".plumb/runs/**");
+        let artifacts = a
+            .scan(&ProjectContext::new("ttui", dir.path()), at(0))
+            .unwrap()
+            .value;
+        assert_eq!(artifacts.len(), 1, "one run, not one per subdirectory");
+        assert_eq!(
+            artifacts[0].detail,
             ArtifactDetail::Capture {
                 run_id: "20260814T112200Z".into(),
                 outcome: crate::adapters::verification::VerificationOutcome::Fail,
