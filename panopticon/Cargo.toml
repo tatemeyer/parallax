@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "The Parallax cockpit: a read-only TUI over parallax-baseline."
 
+[lib]
+name = "panopticon"
+path = "src/lib.rs"
+
 [[bin]]
 name = "panopticon"
 path = "src/main.rs"
