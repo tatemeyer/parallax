@@ -126,6 +126,11 @@ pub struct GithubWorkAdapter<T: HttpTransport> {
     interval: Duration,
     etags: HashMap<String, String>,
     cached: Option<WorkSnapshot>,
+    /// Last-seen check summary per head SHA. A conditional request that
+    /// comes back `304` proves the summary is current; without somewhere
+    /// to keep it, every poll after the first would report an open pull
+    /// request as having no checks at all.
+    checks: HashMap<String, ChecksSummary>,
 }
 
 impl<T: HttpTransport> GithubWorkAdapter<T> {
@@ -136,6 +141,7 @@ impl<T: HttpTransport> GithubWorkAdapter<T> {
             interval: DEFAULT_POLL_INTERVAL,
             etags: HashMap::new(),
             cached: None,
+            checks: HashMap::new(),
         }
     }
 
@@ -218,13 +224,14 @@ fn parse_state(value: &serde_json::Value) -> WorkState {
 fn parse_item(
     value: &serde_json::Value,
     kind: WorkKind,
+    state: WorkState,
     checks: ChecksSummary,
 ) -> Option<WorkItem> {
     Some(WorkItem {
         number: value["number"].as_u64()?,
         title: str_field(value, "title"),
         kind,
-        state: parse_state(value),
+        state,
         labels: as_labels(value),
         checks,
         url: str_field(value, "html_url"),
@@ -287,7 +294,12 @@ impl<T: HttpTransport> WorkAdapter for GithubWorkAdapter<T> {
             if value.get("pull_request").is_some() {
                 continue;
             }
-            if let Some(item) = parse_item(value, WorkKind::Issue, ChecksSummary::none()) {
+            if let Some(item) = parse_item(
+                value,
+                WorkKind::Issue,
+                parse_state(value),
+                ChecksSummary::none(),
+            ) {
                 items.push(item);
             }
         }
@@ -299,14 +311,29 @@ impl<T: HttpTransport> WorkAdapter for GithubWorkAdapter<T> {
         let pulls: serde_json::Value =
             serde_json::from_str(&pulls_json).map_err(|e| AdapterError::Parse(e.to_string()))?;
         for value in pulls.as_array().unwrap_or(&Vec::new()) {
-            let checks = match value["head"]["sha"].as_str() {
-                Some(sha) => match self.fetch(&check_runs_url(&repo, sha))? {
-                    Some(body) => parse_checks(&body)?,
-                    None => ChecksSummary::none(),
+            let state = parse_state(value);
+            // Check runs cost one request per pull request, and a closed
+            // or merged one's checks are dead history. TTUI's feed is 71
+            // pulls of which 1 is open: asking about all of them costs 73
+            // requests and ~24s per poll, which at the default 30s
+            // interval exhausts an authenticated hourly rate limit in
+            // about 35 minutes. Only work still in flight is asked about.
+            let in_flight = matches!(state, WorkState::Open | WorkState::Draft);
+            let checks = match (in_flight, value["head"]["sha"].as_str()) {
+                (true, Some(sha)) => match self.fetch(&check_runs_url(&repo, sha))? {
+                    Some(body) => {
+                        let summary = parse_checks(&body)?;
+                        self.checks.insert(sha.to_string(), summary);
+                        summary
+                    }
+                    // `304`: what we already hold is current. Falling back
+                    // to `none()` here would zero an open pull request's
+                    // checks on every poll after the first.
+                    None => self.checks.get(sha).copied().unwrap_or_default(),
                 },
-                None => ChecksSummary::none(),
+                _ => ChecksSummary::none(),
             };
-            if let Some(item) = parse_item(value, WorkKind::PullRequest, checks) {
+            if let Some(item) = parse_item(value, WorkKind::PullRequest, state, checks) {
                 items.push(item);
             }
         }
