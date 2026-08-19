@@ -44,6 +44,36 @@ fn the_three_verdict_states_parse_from_the_header_line() {
     }
 }
 
+/// The header shape is not invented here: `verdict::render::render_verdict`
+/// writes `# Plumb verdict: {WORD} (run {id})`, and the archived audit in
+/// `docs/audits/` opens with exactly that line. Pinned so a future
+/// tightening of this parser is measured against what Plumb writes rather
+/// than against a fixture someone wrote from memory.
+#[test]
+fn the_header_plumb_actually_writes_parses() {
+    assert_eq!(
+        parse_verdict(
+            "# Plumb verdict: NO-GO (run audit-final)
+"
+        ),
+        Some(VerificationOutcome::Fail)
+    );
+    assert_eq!(
+        parse_verdict(
+            "# Plumb verdict: GO (run 20260814T101500Z)
+"
+        ),
+        Some(VerificationOutcome::Pass)
+    );
+    assert_eq!(
+        parse_verdict(
+            "# Plumb verdict: HOLD (run 20260814T120000Z)
+"
+        ),
+        Some(VerificationOutcome::Hold)
+    );
+}
+
 /// `NO-GO` contains `GO`. Getting this backwards would turn every
 /// blocked review into a pass, which is the worst possible direction to
 /// be wrong in.

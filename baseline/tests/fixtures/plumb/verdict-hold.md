@@ -1,7 +1,11 @@
-# Plumb verdict — run 20260814T120000Z — HOLD
+# Plumb verdict: HOLD (run 20260814T120000Z)
 
-| scenario | lens | outcome |
-|---|---|---|
-| launcher-starfield | breakage | HOLD — capture failed: unmapped glyph U+2726 |
+## Lens poll
+- launcher-starfield / breakage: HOLD — capture failed: unmapped glyph U+2726
+- launcher-starfield / intent: HOLD — capture failed: unmapped glyph U+2726
 
-Capture failure is never a GO.
+## Capture failures
+- launcher-starfield: HOLD — unmapped glyph U+2726
+
+## Findings
+None reported; a capture failure is never a GO.

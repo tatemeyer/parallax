@@ -1,9 +1,10 @@
-# Plumb verdict — run 20260814T101500Z — GO
+# Plumb verdict: GO (run 20260814T101500Z)
 
-| scenario | lens | outcome |
-|---|---|---|
-| omnitrix-dial-rotate | breakage | reported |
-| omnitrix-dial-rotate | intent | reported |
-| omnitrix-dial-rotate | design | skipped — no taste.md |
+## Lens poll
+- omnitrix-dial-rotate / breakage: reported
+- omnitrix-dial-rotate / intent: reported
+- omnitrix-dial-rotate / design: skipped — no taste.md
+- omnitrix-dial-rotate / motion: reported
 
-No findings.
+## Findings
+None.
