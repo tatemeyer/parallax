@@ -5,4 +5,7 @@
 //! `tests/read_only.rs` asserts it over this crate's own source.
 #![warn(missing_docs)]
 
+pub mod app;
+pub mod keys;
+pub mod refresh;
 pub mod view;
