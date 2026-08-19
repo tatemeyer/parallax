@@ -5,6 +5,7 @@
 //! a request and come straight back, because a key that performs I/O on
 //! the UI thread is the rejected design wearing a different hat.
 
+use crate::bell::Bell;
 use crate::keys::{binder, Action};
 use crate::refresh::{Clock, Refresher, Request, Update};
 use crate::view::model::Declared;
@@ -42,6 +43,7 @@ pub struct Panopticon {
     detail_selected: usize,
     help: bool,
     quit: bool,
+    bell: Bell,
 }
 
 impl Panopticon {
@@ -80,6 +82,7 @@ impl Panopticon {
             detail_selected: 0,
             help: false,
             quit: false,
+            bell: Bell::default(),
         }
     }
 
@@ -225,6 +228,7 @@ impl App for Panopticon {
             pending_checks: &pending,
             now: self.clock.now(),
             detail_selected: self.detail_selected,
+            alarm: self.bell.ringing(self.clock.now()),
         };
         render(&frame, area, buf.push_layer());
     }
@@ -251,6 +255,10 @@ impl App for Panopticon {
         for update in self.refresher.drain() {
             self.apply(update);
         }
+
+        // After the updates, not before: the bell reports what the frame
+        // is about to show.
+        self.bell.observe(&self.platform, self.clock.now());
     }
 }
 
