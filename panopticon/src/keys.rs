@@ -128,7 +128,11 @@ mod tests {
                 press(KeyCode::Char('?'), KeyModifiers::NONE),
                 press(KeyCode::Char('q'), KeyModifiers::NONE),
             ]),
-            vec![Some(Action::Refresh), Some(Action::Help), Some(Action::Quit)]
+            vec![
+                Some(Action::Refresh),
+                Some(Action::Help),
+                Some(Action::Quit)
+            ]
         );
     }
 
@@ -157,6 +161,10 @@ mod tests {
         ];
         // Running a declared check is a local build, not a repository
         // mutation; everything else here only moves a cursor.
-        assert_eq!(actions.len(), 9, "the whole verb list, and it is this small");
+        assert_eq!(
+            actions.len(),
+            9,
+            "the whole verb list, and it is this small"
+        );
     }
 }
