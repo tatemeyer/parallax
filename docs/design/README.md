@@ -17,10 +17,16 @@ equivalent under `plans/`.
 - `plumb/` — sub-project #1: perceptual verification. Portable capture
   adapters plus a blinded, adversarial multi-lens reviewer rendering
   GO / NO-GO / HOLD.
+- `panopticon/` — sub-project #3: the cockpit, read-only. A TUI over
+  `parallax-baseline` showing work in flight, verification standing,
+  artifacts, sessions, and the age of every source, built with `ttui`
+  as a published crate. Designed here rather than in TTUI because it is
+  a platform frontend, not a framework example.
 
-Both documents were designed in the TTUI repo (TTUI is Plumb's consumer
-#1) and moved here when this repository was created, per each spec's
-own "Home: its own repository" note. TTUI retains pointer stubs.
+The `parallax/` and `plumb/` documents were designed in the TTUI repo
+(TTUI is Plumb's consumer #1) and moved here when this repository was
+created, per each spec's own "Home: its own repository" note. TTUI
+retains pointer stubs. `panopticon/` was designed here.
 
 ## Governing this repo
 
