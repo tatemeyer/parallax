@@ -1178,7 +1178,9 @@ dependencies = [
 name = "parallax-panopticon"
 version = "0.1.0"
 dependencies = [
+ "crossterm",
  "parallax-baseline",
+ "serde_json",
  "tempfile",
  "ttui",
 ]

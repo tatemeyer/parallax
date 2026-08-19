@@ -72,6 +72,9 @@ pub fn glyph_for(ch: char) -> Result<[u8; 8], GlyphError> {
     if let Some(bitmap) = braille_glyph_for(ch) {
         return Ok(bitmap);
     }
+    if let Some(bitmap) = dash_glyph_for(ch) {
+        return Ok(bitmap);
+    }
     BASIC_FONTS
         .get(ch)
         .or_else(|| LATIN_FONTS.get(ch))
@@ -79,6 +82,29 @@ pub fn glyph_for(ch: char) -> Result<[u8; 8], GlyphError> {
         .or_else(|| BOX_FONTS.get(ch))
         .or_else(|| MISC_FONTS.get(ch))
         .ok_or(GlyphError::Unmapped(ch))
+}
+
+/// Renders the typographic dashes as a centred horizontal bar.
+///
+/// `font8x8` covers ASCII `-` and the box-drawing horizontal, but not
+/// U+2013 or U+2014 — and a hard error on an em dash means any
+/// interface that uses one cannot be captured at all. The Parallax
+/// cockpit hit this on its first capture: it renders an em dash for an
+/// autonomy axis nothing claims, which is a deliberate distinction
+/// from the hyphen in `on-checks`.
+///
+/// The en dash is drawn a pixel shorter each side, because the whole
+/// reason an interface reaches for both is that they are not the same
+/// mark.
+fn dash_glyph_for(ch: char) -> Option<[u8; 8]> {
+    let row = match ch as u32 {
+        0x2014 => 0b1111_1111u8, // em dash
+        0x2013 => 0b0111_1110u8, // en dash
+        _ => return None,
+    };
+    let mut bitmap = [0u8; 8];
+    bitmap[3] = row;
+    Some(bitmap)
 }
 
 /// Renders a Braille Patterns codepoint (U+2800-U+28FF, the block TTUI's
@@ -205,6 +231,29 @@ mod tests {
         // naive top-to-bottom bit order.
         let bitmap = glyph_for('\u{2808}').unwrap();
         assert_eq!(bitmap, [0xF0, 0xF0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    /// An em dash is a common TUI glyph and font8x8 has no table for
+    /// it. Hard-erroring meant any interface using one could not be
+    /// captured — which the Parallax cockpit discovered by being one.
+    #[test]
+    fn the_typographic_dashes_render_rather_than_failing() {
+        let em = glyph_for(char::from_u32(0x2014).unwrap()).expect("em dash");
+        let en = glyph_for(char::from_u32(0x2013).unwrap()).expect("en dash");
+        assert_ne!(em, [0u8; 8], "an em dash draws something");
+        assert_ne!(em, en, "and is not the same mark as an en dash");
+        assert_eq!(
+            em.iter().filter(|row| **row != 0).count(),
+            1,
+            "one bar, not a block"
+        );
+    }
+
+    #[test]
+    fn a_hyphen_is_still_the_hyphen_font8x8_ships() {
+        let hyphen = glyph_for('-').expect("hyphen");
+        let em = glyph_for(char::from_u32(0x2014).unwrap()).unwrap();
+        assert_ne!(hyphen, em, "a hyphen is not an em dash");
     }
 
     #[test]
