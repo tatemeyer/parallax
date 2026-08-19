@@ -22,6 +22,11 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// The recorded feeds deliberately still contain a closed issue and a
+/// merged pull request, even though `state=open` would not return them.
+/// They cover `parse_state`'s `merged_at` arm and the guard that keeps a
+/// poll from asking about finished work's check runs — both of which
+/// must stay correct if the query ever widens again.
 fn transport() -> FixtureTransport {
     let mut t = FixtureTransport::new();
     t.insert_from_file(

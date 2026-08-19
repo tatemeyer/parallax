@@ -104,13 +104,24 @@ pub trait WorkAdapter {
 /// The issues endpoint for a repository. GitHub returns pull requests
 /// here too; they carry a `pull_request` key and are skipped, because
 /// `pulls_url` returns them with their head SHA.
+///
+/// **Open work only.** A repository's history is overwhelmingly
+/// finished: TTUI's `state=all` feed returns exactly 100 items with a
+/// `rel="next"` link, so everything past the first page was silently
+/// dropped — a work list missing items with no sign that it was
+/// truncated. Asking only for open work removes the truncation for any
+/// repository with fewer than 100 open items, and costs nothing a
+/// frontend was using: finished work is not in flight. Real pagination
+/// is still wanted for the day something needs history, and is tracked
+/// separately.
 pub fn issues_url(repo: &str) -> String {
-    format!("https://api.github.com/repos/{repo}/issues?state=all&per_page=100")
+    format!("https://api.github.com/repos/{repo}/issues?state=open&per_page=100")
 }
 
-/// The pull requests endpoint for a repository.
+/// The pull requests endpoint for a repository. Open work only, for the
+/// reason [`issues_url`] gives.
 pub fn pulls_url(repo: &str) -> String {
-    format!("https://api.github.com/repos/{repo}/pulls?state=all&per_page=100")
+    format!("https://api.github.com/repos/{repo}/pulls?state=open&per_page=100")
 }
 
 /// The check-runs endpoint for one commit.
