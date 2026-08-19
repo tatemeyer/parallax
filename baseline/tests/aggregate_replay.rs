@@ -1,14 +1,11 @@
 //! Both real manifests, replayed end to end through aggregation against
 //! recorded fixtures. No network, no TTY, no wall clock.
 
-use parallax_baseline::adapters::artifact::{
-    ArtifactDetail, CaptureArtifactAdapter, MetricsArtifactAdapter,
-};
+use parallax_baseline::adapters::artifact::{ArtifactDetail, MetricsArtifactAdapter};
+use parallax_baseline::adapters::factory::{from_manifest_with, AdapterConfig};
 use parallax_baseline::adapters::http::FixtureTransport;
-use parallax_baseline::adapters::session::FilesystemSessionAdapter;
 use parallax_baseline::adapters::verification::{
-    CommandOutput, CommandVerificationAdapter, PlumbVerificationAdapter, ScriptedRunner,
-    VerificationOutcome,
+    CommandOutput, ScriptedRunner, VerificationOutcome,
 };
 use parallax_baseline::adapters::work::{check_runs_url, issues_url, pulls_url, GithubWorkAdapter};
 use parallax_baseline::autonomy::{Implement, Merge, Readiness};
@@ -116,51 +113,46 @@ fn me_tree() -> tempfile::TempDir {
     dir
 }
 
-/// Builds TTUI's adapters exactly as its manifest declares them.
-fn ttui_adapters(root: &Path) -> ProjectAdapters {
-    let mut a = ProjectAdapters::new();
-    a.work = Some(Box::new(GithubWorkAdapter::new(github_transport())));
-    let mut lint = ScriptedRunner::new();
-    lint.push(CommandOutput {
-        status: 0,
-        stdout: String::new(),
-        stderr: String::new(),
-    });
-    a.verification
-        .push(Box::new(CommandVerificationAdapter::new(
-            "lint",
-            "cargo clippy --all-targets -- -D warnings",
-            lint,
-        )));
-    let mut tests = ScriptedRunner::new();
-    tests.push(CommandOutput {
-        status: 101,
-        stdout: String::new(),
-        stderr: "test result: FAILED. 1 failed".into(),
-    });
-    a.verification
-        .push(Box::new(CommandVerificationAdapter::new(
-            "tests",
-            "cargo test",
-            tests,
-        )));
-    a.verification.push(Box::new(PlumbVerificationAdapter::new(
-        "perceptual",
-        root.join(".plumb/runs"),
-    )));
-    a.artifacts
-        .push(Box::new(CaptureArtifactAdapter::new(".plumb/runs/**")));
-    a.sessions = Some(Box::new(FilesystemSessionAdapter::new(
-        ".claude/worktrees/*",
-    )));
-    a
+/// TTUI's adapters, built the way the library builds them.
+///
+/// This helper used to construct all six by hand, reading the manifest
+/// with its eyes. It now goes through the factory, and every assertion
+/// below is unchanged — which is what proves the factory encodes the
+/// manifest's existing meaning rather than a second opinion about it.
+fn ttui_adapters(validated: &Validated) -> ProjectAdapters {
+    // A factory hands out a fresh runner per `command` entry, so the
+    // closure scripts by call index in declaration order: `lint` passes,
+    // `tests` fails.
+    let call = std::cell::Cell::new(0usize);
+    from_manifest_with(
+        validated,
+        &AdapterConfig::default(),
+        github_transport,
+        || {
+            let mut r = ScriptedRunner::new();
+            if call.replace(call.get() + 1) == 0 {
+                r.push(CommandOutput {
+                    status: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            } else {
+                r.push(CommandOutput {
+                    status: 101,
+                    stdout: String::new(),
+                    stderr: "test result: FAILED. 1 failed".into(),
+                });
+            }
+            r
+        },
+    )
 }
 
 #[test]
 fn ttui_aggregates_every_declared_family_from_fixtures() {
     let tree = ttui_tree();
     let validated = load_rooted("ttui.yaml", tree.path());
-    let mut adapters = ttui_adapters(tree.path());
+    let mut adapters = ttui_adapters(&validated);
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
     assert!(
@@ -193,7 +185,7 @@ fn ttui_aggregates_every_declared_family_from_fixtures() {
 fn ttui_work_items_project_onto_the_normalized_axes() {
     let tree = ttui_tree();
     let validated = load_rooted("ttui.yaml", tree.path());
-    let mut adapters = ttui_adapters(tree.path());
+    let mut adapters = ttui_adapters(&validated);
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
     let by_number = |n: u64| {
@@ -229,7 +221,7 @@ fn ttui_work_items_project_onto_the_normalized_axes() {
 fn a_label_ttui_does_not_declare_is_reported_as_unmapped() {
     let tree = ttui_tree();
     let validated = load_rooted("ttui.yaml", tree.path());
-    let mut adapters = ttui_adapters(tree.path());
+    let mut adapters = ttui_adapters(&validated);
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
     assert!(state.unmapped_labels.contains(&"needs-intent".to_string()));
@@ -246,7 +238,7 @@ fn a_label_ttui_does_not_declare_is_reported_as_unmapped() {
 fn ttui_capture_artifacts_carry_the_run_s_verdict() {
     let tree = ttui_tree();
     let validated = load_rooted("ttui.yaml", tree.path());
-    let mut adapters = ttui_adapters(tree.path());
+    let mut adapters = ttui_adapters(&validated);
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
     let artifacts = &state.artifacts[0].value;
@@ -264,7 +256,7 @@ fn ttui_capture_artifacts_carry_the_run_s_verdict() {
 fn ttui_source_freshness_distinguishes_the_polled_feed_from_the_watched_ones() {
     let tree = ttui_tree();
     let validated = load_rooted("ttui.yaml", tree.path());
-    let mut adapters = ttui_adapters(tree.path());
+    let mut adapters = ttui_adapters(&validated);
     let state = aggregate_project(&validated, &mut adapters, at(0));
 
     let sources = state.sources(at(45));
@@ -355,10 +347,11 @@ fn both_projects_aggregate_into_one_platform_state() {
         )));
 
     let mut inputs = vec![
-        (
-            load_rooted("ttui.yaml", ttui.path()),
-            ttui_adapters(ttui.path()),
-        ),
+        {
+            let v = load_rooted("ttui.yaml", ttui.path());
+            let a = ttui_adapters(&v);
+            (v, a)
+        },
         (
             load_rooted("model-experiments.yaml", me.path()),
             me_adapters,
