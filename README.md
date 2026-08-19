@@ -21,7 +21,6 @@ sketched, not built.
   families, aggregated cross-project state with per-source freshness,
   and control actions behind a confirmation contract. Headless — it
   never touches a terminal. See [`baseline/README.md`](baseline/README.md).
-- **`manifests/`** — the registered projects' `parallax.yaml` files.
 - **`plumb/`** — sub-project #1. A Claude
   Code plugin: capture a terminal UI, then judge it. See
   [`plumb/README.md`](plumb/README.md).

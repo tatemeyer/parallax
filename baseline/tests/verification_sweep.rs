@@ -21,9 +21,7 @@ use std::time::{Duration, SystemTime};
 
 fn manifest(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("manifests")
+        .join("tests/fixtures/manifests")
         .join(name)
 }
 
@@ -35,10 +33,14 @@ fn at(secs: u64) -> SystemTime {
     SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000 + secs)
 }
 
-/// Bullet 2, first half: both real manifests parse and validate.
+/// Bullet 2, first half: the registered projects' manifests parse and
+/// validate. They are fixture copies — each project now carries its own
+/// `parallax.yaml`, which is what "a project joins the platform by
+/// dropping one in its root" means.
 #[test]
 fn both_real_manifests_parse_and_validate() {
     assert_eq!(load("ttui.yaml").manifest().project.name, "ttui");
+    assert_eq!(load("sesh.yaml").manifest().project.name, "sesh");
     assert_eq!(
         load("model-experiments.yaml").manifest().project.name,
         "model-experiments"
@@ -49,7 +51,12 @@ fn both_real_manifests_parse_and_validate() {
 /// against the real files, in the spec's own order.
 #[test]
 fn every_row_of_the_projection_table_holds_for_the_real_manifests() {
-    let ttui = load("ttui.yaml");
+    // The three-tier half of the spec's table is carried by `tiers.yaml`
+    // rather than by TTUI's own manifest: TTUI assigns those tiers from a
+    // plan's Slice/Task tags, not from issue labels, so declaring them as
+    // labels would be a claim nothing backs (Parallax #16). The table is
+    // still the vocabulary's contract, so it is still asserted.
+    let ttui = load("tiers.yaml");
     let ttui_map = &ttui.manifest().work.as_ref().unwrap().autonomy_map;
     let me = load("model-experiments.yaml");
     let me_map = &me.manifest().work.as_ref().unwrap().autonomy_map;
@@ -111,7 +118,7 @@ fn every_row_of_the_projection_table_holds_for_the_real_manifests() {
 /// valid, reduced view rather than an error.
 #[test]
 fn a_work_only_manifest_produces_a_valid_reduced_view_rather_than_an_error() {
-    let mut parsed = parse_manifest_file(&manifest("ttui.yaml")).unwrap();
+    let mut parsed = parse_manifest_file(&manifest("tiers.yaml")).unwrap();
     parsed.verification.clear();
     parsed.artifacts.clear();
     parsed.sessions = None;
@@ -119,7 +126,7 @@ fn a_work_only_manifest_produces_a_valid_reduced_view_rather_than_an_error() {
     let validated = validate(parsed).expect("a work-only manifest is valid");
 
     let state = aggregate_project(&validated, &mut ProjectAdapters::new(), at(0));
-    assert_eq!(state.name, "ttui");
+    assert_eq!(state.name, "tiers");
     assert!(state.verification.is_empty());
     assert!(state.artifacts.is_empty());
     assert!(state.sessions.is_none());
