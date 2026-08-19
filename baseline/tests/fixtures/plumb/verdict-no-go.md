@@ -1,15 +1,15 @@
-# Plumb verdict — run 20260814T112200Z — NO-GO
+# Plumb verdict: NO-GO (run 20260814T112200Z)
 
-| scenario | lens | outcome |
-|---|---|---|
-| tardis-time-rotor | breakage | reported |
-| tardis-time-rotor | intent | reported |
+## Lens poll
+- tardis-time-rotor / breakage: reported
+- tardis-time-rotor / intent: reported
+- tardis-time-rotor / design: reported
+- tardis-time-rotor / motion: reported
 
 ## Findings
-
-### blocker — breakage — rows 12-18, left panel
-
+### blocker — breakage — high — rows 12-18, left panel
 The time rotor column renders as a solid block; no Braille cell
 structure is visible.
 
-previously overruled (1)
+## Suppressed by ruling
+- 1 finding previously overruled.
