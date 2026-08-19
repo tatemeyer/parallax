@@ -86,6 +86,28 @@ pub enum Update {
     },
 }
 
+/// Takes the checks that run a build out of `adapters`, leaving only
+/// what is safe to poll on a cadence.
+///
+/// Public because anything that aggregates outside the refresh thread —
+/// fixture mode, a test, a future daemon — must apply the same rule. A
+/// second implementation of "which checks are safe to poll" is how a
+/// cockpit ends up running `cargo test` on a timer.
+pub fn split_by_cost(
+    adapters: &mut ProjectAdapters,
+) -> Vec<Box<dyn parallax_baseline::adapters::verification::VerificationAdapter + Send>> {
+    let mut reading = Vec::new();
+    let mut executing = Vec::new();
+    for adapter in adapters.verification.drain(..) {
+        match adapter.cost() {
+            CheckCost::Read => reading.push(adapter),
+            CheckCost::Execute => executing.push(adapter),
+        }
+    }
+    adapters.verification = reading;
+    executing
+}
+
 /// One project's adapters, split by what calling them costs.
 struct Split {
     validated: Validated,
@@ -117,21 +139,13 @@ impl Refresher {
 
         for (validated, mut adapters) in projects {
             let name = validated.manifest().project.name.clone();
-            let mut reading = Vec::new();
-            let mut executing = Vec::new();
-            for adapter in adapters.verification.drain(..) {
-                match adapter.cost() {
-                    CheckCost::Read => reading.push(adapter),
-                    CheckCost::Execute => {
-                        executor_kinds
-                            .entry(name.clone())
-                            .or_default()
-                            .push(kind_of(&adapter.source_name()));
-                        executing.push(adapter);
-                    }
-                }
+            let executing = split_by_cost(&mut adapters);
+            for adapter in &executing {
+                executor_kinds
+                    .entry(name.clone())
+                    .or_default()
+                    .push(kind_of(&adapter.source_name()));
             }
-            adapters.verification = reading;
             splits.push(Split {
                 validated,
                 reading: adapters,
