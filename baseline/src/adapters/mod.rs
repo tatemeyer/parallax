@@ -5,6 +5,7 @@
 //! as `Box<dyn _>`.
 
 pub mod artifact;
+pub mod factory;
 pub mod http;
 pub mod session;
 pub mod verification;
