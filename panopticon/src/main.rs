@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-panopticon — the Parallax cockpit (read-only)
+panopticon — the Parallax cockpit
 
 USAGE:
     panopticon [--projects-root <dir> | --registry <file> | --fixtures <dir>]
