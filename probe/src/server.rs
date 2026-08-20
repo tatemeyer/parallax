@@ -194,9 +194,14 @@ mod tests {
     /// tailnet address is the important row: it is the one a reasonable
     /// person would assume is safe, and it is the one that would quietly
     /// bypass `tailscale serve`.
+    ///
+    /// `100.64.0.1` stands for it — Tailscale allocates from
+    /// `100.64.0.0/10`, so any address in that range is the case this
+    /// row is about. A real one was used when this was verified on
+    /// hardware; it is not checked in, because the repository is public.
     #[test]
     fn every_routable_address_is_refused_including_a_tailnet_one() {
-        for host in ["0.0.0.0", "192.168.1.10", "100.67.55.58", "::"] {
+        for host in ["0.0.0.0", "192.168.1.10", "100.64.0.1", "::"] {
             let err = bind_address(host, DEFAULT_PORT)
                 .expect_err("bound a routable address: the probe is now exposed");
             assert!(err.contains("loopback only"), "got {err}");

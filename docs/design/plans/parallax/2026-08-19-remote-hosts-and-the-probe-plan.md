@@ -208,9 +208,9 @@ implementation, three consumers, which is what the comment was asking
 for. A second implementation of "which checks are safe to poll" is how
 something ends up running `cargo test` on a timer.
 
-**Verified:** against the real `C:/Users/tatem/Dev` — two registered
-projects, TTUI's work feed returning four live GitHub items, SESH's
-degrading with the 404 its private repo actually returns.
+**Verified:** against a real development root, not a fixture — two
+registered projects, TTUI's work feed returning four live GitHub items,
+SESH's degrading with the 404 its private repo actually returns.
 
 ### Slice 2.2: Serving
 
@@ -246,10 +246,14 @@ serving a probe. On these machines, that is all of them.
 - [x] A non-loopback address is refused with a message naming `tailscale serve` as the intended path.
 - [x] The security argument is documented where the bind happens, not only in the spec.
 
-**Verified:** `0.0.0.0`, a LAN address, `::`, and **`100.67.55.58` — this
-machine's own tailnet address** are all refused. The tailnet row is the
-one that matters: binding it looks safe and would publish the probe to
-the whole tailnet directly, bypassing `tailscale serve` and its ACLs.
+**Verified:** `0.0.0.0`, a LAN address, `::`, and **this machine's own
+tailnet address** are all refused. The tailnet row is the one that
+matters: binding it looks safe and would publish the probe to the whole
+tailnet directly, bypassing `tailscale serve` and its ACLs.
+
+The address used at verification time was a real `100.64.0.0/10` one and
+is not recorded here — the repository is public. The test stands in
+`100.64.0.1` from the same range, which exercises the identical branch.
 
 #### Task 9: The refresh runs no build
 

@@ -136,9 +136,9 @@ example. In short:
 ```yaml
 apiVersion: parallax/v1
 projects:
-  - root: C:/Users/tatem/Dev/Parallax
+  - root: C:/Users/you/Dev/Parallax
 peers:
-  - url: https://pi5.tail9e8086.ts.net
+  - url: https://pi5.tail-scale.ts.net
 ```
 
 ```

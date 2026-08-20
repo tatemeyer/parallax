@@ -332,7 +332,7 @@ mod tests {
             status: 502,
             message: String::new(),
         });
-        let mut c = PeerClient::new(transport, "https://tatepi.tail9e8086.ts.net");
+        let mut c = PeerClient::new(transport, "https://tatepi.tail-scale.ts.net");
 
         let failure = c.fetch(at(0)).unwrap_err();
         assert!(failure.reason.contains("502"), "got {}", failure.reason);
@@ -353,7 +353,7 @@ mod tests {
             status: 404,
             message: "no such path".into(),
         });
-        let mut c = PeerClient::new(transport, "https://tatepi.tail9e8086.ts.net");
+        let mut c = PeerClient::new(transport, "https://tatepi.tail-scale.ts.net");
 
         let failure = c.fetch(at(0)).unwrap_err();
         assert!(failure.reason.contains("no such path"));
