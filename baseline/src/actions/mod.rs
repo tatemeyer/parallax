@@ -4,14 +4,22 @@
 //! an executor without a `Confirmation` — enforced by the type system,
 //! not by a convention.
 //!
-//! Split across three files by responsibility: the action set here, the
-//! confirmation contract in `confirm`, execution in `executor`. Every
+//! Split by responsibility: the action set here, the confirmation
+//! contract in `confirm`, execution in `executor`, the serialized
+//! contract in `wire`, and acting on another machine in `remote`. Every
 //! type is re-exported, so no caller outside this module sees the split.
+//!
+//! **`remote` does not implement `ActionExecutor`, on purpose.** A local
+//! call either happened or it did not, and `Result` says that exactly. A
+//! submission that crossed a network has a third possibility, and the
+//! two-valued shape has no room for it.
 
 mod confirm;
 mod executor;
 mod github;
 mod process;
+mod remote;
+pub mod wire;
 
 pub use confirm::{authorize, fingerprint, ActionError, Authorized, Confirmation};
 pub use executor::{
@@ -20,6 +28,7 @@ pub use executor::{
 };
 pub use github::GithubWorkControl;
 pub use process::LocalProcessControl;
+pub use remote::{RemoteExecutor, Standing, Submitted, ACTION_PATH};
 
 use serde::{Deserialize, Serialize};
 
