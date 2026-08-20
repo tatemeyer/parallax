@@ -191,6 +191,35 @@ impl Panopticon {
             .nth(self.detail_selected)
     }
 
+    /// What the selected row declares, and which of its build checks
+    /// have not reported yet.
+    ///
+    /// Both were looked up by a bare project name, and a peer's row
+    /// shares that name with the local clone beside it — so on the Pi's
+    /// `sesh` pane they described **this** machine's `sesh`. The same
+    /// wrong-machine mistake as running its checks here, quieter for
+    /// being only a rendering.
+    ///
+    /// A peer's declarations come from what it actually sent, since its
+    /// manifest is on the peer. It has no outstanding build checks here
+    /// because this cockpit never starts one there — which is exactly
+    /// what the refusal in `act` means.
+    fn selected_declaration(&self) -> (Declared, Vec<String>) {
+        let Some(project) = self.platform.projects.get(self.selected) else {
+            return (Declared::default(), Vec::new());
+        };
+        if project.peer.is_some() {
+            return (Declared::observed(project), Vec::new());
+        }
+        (
+            self.declared
+                .get(&project.name)
+                .copied()
+                .unwrap_or_default(),
+            self.pending_checks(&project.name),
+        )
+    }
+
     /// The selected project's name, when there is one.
     fn selected_name(&self) -> Option<String> {
         self.platform
@@ -529,15 +558,14 @@ impl App for Panopticon {
     }
 
     fn view(&self, area: Rect, buf: &mut LayerStack) {
-        let name = self.selected_name().unwrap_or_default();
-        let pending = self.pending_checks(&name);
+        let (declared, pending) = self.selected_declaration();
         let log = self.log_lines();
         let question = self.control.prompt().map(|p| p.line());
         let frame = Frame {
             platform: &self.platform,
             selected: self.selected,
             tab: self.tab,
-            declared: self.declared.get(&name).copied().unwrap_or_default(),
+            declared,
             pending_checks: &pending,
             now: self.clock.now(),
             detail_selected: self.detail_selected,
@@ -710,6 +738,74 @@ mod tests {
             app.control.log().is_empty(),
             "a local project was refused: {:?}",
             app.control.log()
+        );
+    }
+
+    /// The Pi's `sesh` pane must be shaped by what the Pi sent, not by
+    /// this machine's `sesh` manifest. They share a bare name, and both
+    /// lookups behind the panes were keyed by it.
+    #[test]
+    fn a_peers_pane_is_shaped_by_what_it_sent_not_by_a_local_manifest() {
+        // A local `sesh` that declares a work feed, so borrowing it
+        // would be visible.
+        let local = validate(
+            parse_manifest(
+                "project:\n  name: sesh\n  root: /tmp/sesh\n\
+                 work:\n  adapter: github\n  repo: tatemeyer/sesh\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let projects = vec![local];
+        let refresher = Refresher::spawn(
+            projects
+                .iter()
+                .cloned()
+                .map(|v| (v, ProjectAdapters::new()))
+                .collect(),
+            Clock::Frozen(at(0)),
+        );
+        let mut app = Panopticon::new(
+            &projects,
+            refresher,
+            Clock::Frozen(at(0)),
+            Duration::from_secs(30),
+        )
+        .with_peers(vec!["pi5".to_string()]);
+
+        // The Pi's `sesh` declares no work feed and does have sessions —
+        // the opposite shape from the local one.
+        app.apply(Update::PeerState {
+            peer: "pi5".into(),
+            projects: vec![ProjectState {
+                name: "sesh".into(),
+                sessions: Some(parallax_baseline::freshness::Observed::watched(
+                    Vec::new(),
+                    at(0),
+                )),
+                ..Default::default()
+            }],
+        });
+
+        select(&mut app, "sesh");
+        assert!(
+            app.selected_declaration().0.work,
+            "the local manifest does declare a work feed"
+        );
+
+        select(&mut app, "sesh@pi5");
+        let (declared, pending) = app.selected_declaration();
+        assert!(
+            !declared.work,
+            "the Pi's pane borrowed this machine's manifest"
+        );
+        assert!(
+            declared.sessions,
+            "the Pi sent a session feed and the pane does not show it"
+        );
+        assert!(
+            pending.is_empty(),
+            "a peer has no build checks outstanding here — none can be started"
         );
     }
 

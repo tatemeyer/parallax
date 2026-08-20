@@ -66,6 +66,28 @@ impl Declared {
             sessions: validated.declares(Family::Session),
         }
     }
+
+    /// What a peer's state demonstrates, for a row whose manifest this
+    /// machine has never seen.
+    ///
+    /// A local row reads its manifest and can tell an undeclared family
+    /// from a declared-but-empty one. A peer's manifest is on the peer,
+    /// so there is only what arrived. Looking the name up in this
+    /// machine's manifests instead would describe the *local* clone —
+    /// the Pi's `sesh` pane shaped by this desktop's `sesh`, which is
+    /// the same wrong-machine mistake as running its checks here.
+    ///
+    /// It under-claims rather than over-claims: a feed the peer declares
+    /// but has nothing in yet reads as undeclared. That errs toward
+    /// showing less, rather than toward inventing a source.
+    pub fn observed(project: &ProjectState) -> Self {
+        Self {
+            work: project.work.is_some(),
+            verification: !project.verification.is_empty(),
+            artifacts: !project.artifacts.is_empty(),
+            sessions: project.sessions.is_some(),
+        }
+    }
 }
 
 /// The worst of what a project knows about itself at `now`.
