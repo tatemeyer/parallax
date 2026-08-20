@@ -1,10 +1,39 @@
 # .github/workflows/ci.yml
+#
+# This repository is private, so every job bills against the account's
+# Actions minutes — and Windows bills at 2x. The shape below is chosen
+# to keep the signal and cut the bill:
+#
+#   * `clippy` and `fmt` run on Linux only. Neither is
+#     platform-dependent: the lints and the formatter produce identical
+#     results on both, so the second copy was paying double for the same
+#     answer.
+#   * `build` and `test` stay on both. This project is Windows-first and
+#     its adapters shell out, spawn pseudo-consoles, and walk paths —
+#     exactly the things that differ, and the reason a Windows-only bug
+#     would otherwise reach a machine before CI did.
+#   * `concurrency` cancels a superseded run when a branch is pushed
+#     again, rather than paying for a result nobody will read.
+#   * Documentation-only changes skip CI. There is no code to build, and
+#     a docs PR was costing a full matrix twice — once on the branch and
+#     again on the merge to `main`.
+
 name: CI
 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -28,10 +57,7 @@ jobs:
       - run: cargo test --workspace --verbose
 
   fmt:
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -40,10 +66,7 @@ jobs:
       - run: cargo fmt --check
 
   clippy:
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
