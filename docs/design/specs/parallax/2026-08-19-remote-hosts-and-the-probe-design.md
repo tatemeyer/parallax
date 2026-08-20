@@ -318,10 +318,30 @@ one.
 
 ## Open questions for sign-off
 
-1. **Does this become sub-project #6?** The roadmap has five. This is
-   platform-level and spans baseline, a new crate, and the cockpit,
-   which is the shape of a sub-project rather than an amendment. It is
-   filed under the `parallax/` arc for now.
+1. **Resolved — the roadmap stops numbering.** The question was whether
+   this is sub-project #6. The better answer is that the numbers have
+   already stopped earning their place, and adding a sixth would make
+   that worse rather than settle it.
+
+   Three signs of it. `docs/design/` **already abandoned numbering** —
+   specs live under `parallax/`, `plumb/`, and `panopticon/`, and no
+   directory is named for a number. The numbers already double-count:
+   #3 and #5 are one component at two stages, not two sub-projects. And
+   the five entries are not even the same kind of thing — a tool
+   (`plumb`), a library (`baseline`), two arcs of one TUI, and a feature
+   of a consumer repo.
+
+   So the roadmap converts to **named components, each progressing
+   through arcs** — the vocabulary the plans and the docs tree already
+   use. `panopticon` becomes one row with two shipped arcs rather than
+   #3 and #5. Growth then means adding an arc to a component, or a
+   component to the table, which is what actually happens; it never
+   means renumbering something that shipped.
+
+   The probe is a component. This document stays under the `parallax/`
+   arc, because what it specifies first is a platform-wide contract —
+   the wire format — and that is the same reason the registry and
+   adapter-factory design lives there rather than under `baseline`.
 2. **Should the probe serve the local registry, or a configured subset?**
    Serving everything with a `parallax.yaml` is the zero-configuration
    answer and matches `Registry::scan`. A host that wanted to publish
