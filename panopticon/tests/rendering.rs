@@ -301,3 +301,75 @@ fn the_same_frame_renders_identically_twice() {
         }
     }
 }
+
+// --- What a blinded perceptual review found on screen (run
+// 20260820T020000Z) and these tests now hold in place ---
+
+/// Two lenses, independently: a title clipped flush against the border
+/// is indistinguishable from one that ended there. Row #141's
+/// "…do with a singl" read as a complete title to a reader who could
+/// only look.
+#[test]
+fn an_over_wide_line_is_marked_rather_than_clipped_silently() {
+    let long = "a title far longer than the pane it is being asked to fit inside of, by a lot";
+    let mut project = ttui_state();
+    let work = project.work.as_mut().expect("work feed");
+    work.value.items = vec![item(1, long, &["gated"])];
+    let platform = PlatformState {
+        projects: vec![project],
+    };
+
+    let mut buf = Buffer::new(60, 20);
+    render(&frame(&platform, Tab::Work, &[]), area(60, 20), &mut buf);
+    let screen = text_of(&buf);
+
+    assert!(
+        screen.contains("..."),
+        "a truncated title says nothing about being truncated:
+{screen}"
+    );
+    assert!(
+        !screen.contains("by a lot"),
+        "the elision kept text it had no room for:
+{screen}"
+    );
+}
+
+/// A line that fits is left exactly alone — the marker is evidence of
+/// truncation, so a spurious one is a lie in the other direction.
+#[test]
+fn a_line_that_fits_is_untouched() {
+    let mut buf = Buffer::new(160, 20);
+    let platform = PlatformState {
+        projects: vec![ttui_state()],
+    };
+    render(&frame(&platform, Tab::Work, &[]), area(160, 20), &mut buf);
+    assert!(!text_of(&buf).contains("..."));
+}
+
+/// The bell rings for the platform while the footer box holds the
+/// *selected* project's sources. A banner over a healthy project with
+/// nothing on screen to account for it is a question, not a warning.
+#[test]
+fn the_blocker_banner_names_whose_blocker_it_is() {
+    let healthy = ProjectState {
+        name: "sesh".to_string(),
+        ..ProjectState::default()
+    };
+    let broken = ttui_state(); // its artifact source is degraded
+    let platform = PlatformState {
+        projects: vec![healthy, broken],
+    };
+    let mut f = frame(&platform, Tab::Work, &[]);
+    f.alarm = true;
+    f.selected = 0; // looking at sesh while ttui is the one on fire
+
+    let mut buf = Buffer::new(120, 20);
+    render(&f, area(120, 20), &mut buf);
+    let screen = text_of(&buf);
+    assert!(
+        screen.contains("BLOCKER: ttui"),
+        "the banner does not say whose blocker it is:
+{screen}"
+    );
+}

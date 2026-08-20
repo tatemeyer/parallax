@@ -55,17 +55,17 @@ fn the_three_tiers_project_onto_the_spec_s_table() {
     let direct = project(map, "direct").expect("direct is declared");
     assert_eq!(direct.implement, Some(Implement::Agent));
     assert_eq!(direct.merge, Some(Merge::DirectPush));
-    assert_eq!(direct.readiness, Readiness::Verifiable);
+    assert_eq!(direct.readiness, None);
 
     let gated = project(map, "gated").expect("gated is declared");
     assert_eq!(gated.implement, Some(Implement::Agent));
     assert_eq!(gated.merge, Some(Merge::OnChecks));
-    assert_eq!(gated.readiness, Readiness::Verifiable);
+    assert_eq!(gated.readiness, None);
 
     let human = project(map, "human").expect("human is declared");
     assert_eq!(human.implement, Some(Implement::Agent));
     assert_eq!(human.merge, Some(Merge::HumanApproval));
-    assert_eq!(human.readiness, Readiness::Verifiable);
+    assert_eq!(human.readiness, None);
 }
 
 #[test]
@@ -94,22 +94,22 @@ fn model_experiments_labels_project_onto_the_spec_s_table() {
     let safe = project(map, "autonomy:safe").expect("declared");
     assert_eq!(safe.implement, Some(Implement::Agent));
     assert_eq!(safe.merge, Some(Merge::OnChecks));
-    assert_eq!(safe.readiness, Readiness::Verifiable);
+    assert_eq!(safe.readiness, None);
 
     let review = project(map, "autonomy:review").expect("declared");
     assert_eq!(review.implement, Some(Implement::Agent));
     assert_eq!(review.merge, Some(Merge::HumanApproval));
-    assert_eq!(review.readiness, Readiness::Verifiable);
+    assert_eq!(review.readiness, None);
 
     let human = project(map, "autonomy:human").expect("declared");
     assert_eq!(human.implement, Some(Implement::HumanOnly));
     assert_eq!(human.merge, None, "the spec's table has a dash here");
-    assert_eq!(human.readiness, Readiness::Verifiable);
+    assert_eq!(human.readiness, None);
 
     let intent = project(map, "needs-intent").expect("declared");
     assert_eq!(intent.implement, None, "the spec's table has a dash here");
     assert_eq!(intent.merge, None, "the spec's table has a dash here");
-    assert_eq!(intent.readiness, Readiness::NeedsIntent);
+    assert_eq!(intent.readiness, Some(Readiness::NeedsIntent));
 }
 
 /// The two asymmetries the shared vocabulary exists to surface, asserted
