@@ -10,12 +10,16 @@
 
 #![warn(missing_docs)]
 
-use parallax_baseline::adapters::factory::AdapterConfig;
+use parallax_baseline::actions::wire::ProbeRun;
+use parallax_baseline::actions::ActionExecutor;
+use parallax_baseline::adapters::factory::{executor_for, AdapterConfig};
 use parallax_baseline::freshness::DEFAULT_POLL_INTERVAL;
 use parallax_baseline::registry::Registry;
-use parallax_probe::server::{Probe, DEFAULT_PORT};
+use parallax_probe::control::{Control, Executors, StdoutAudit};
+use parallax_probe::server::{Probe, Serving, DEFAULT_PORT};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const USAGE: &str = "\
 parallax-probe — serves this machine's Parallax state on loopback.
@@ -30,6 +34,11 @@ USAGE:
     --peer <name>          How this machine names itself (default: hostname).
     --github-token <tok>   Authenticate the GitHub work adapter. Falls
                            back to $GITHUB_TOKEN, then $GH_TOKEN.
+    --allow-control        Let a cockpit on the tailnet act on this
+                           machine's projects. OFF by default: serving
+                           state is a disclosure, and accepting actions
+                           is a shell. Anyone who can reach the probe can
+                           then merge, push, and start agent runs here.
     -h, --help             This.
 
 The probe binds 127.0.0.1 only. Publish it with:
@@ -62,6 +71,7 @@ struct Args {
     port: u16,
     peer: Option<String>,
     github_token: Option<String>,
+    allow_control: bool,
 }
 
 fn parse_args() -> Result<Option<Args>, String> {
@@ -71,6 +81,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         port: DEFAULT_PORT,
         peer: None,
         github_token: None,
+        allow_control: false,
     };
     let mut argv = std::env::args().skip(1);
     while let Some(flag) = argv.next() {
@@ -80,6 +91,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--projects-root" => args.projects_root = Some(PathBuf::from(value()?)),
             "--registry" => args.registry = Some(PathBuf::from(value()?)),
             "--peer" => args.peer = Some(value()?),
+            "--allow-control" => args.allow_control = true,
             "--github-token" => args.github_token = Some(value()?),
             "--port" => {
                 let raw = value()?;
@@ -168,8 +180,57 @@ fn main() -> ExitCode {
         registry.projects().len(),
         probe.url()
     );
-    probe.serve(&registry, &config, &peer);
+
+    // Built here rather than inside `serve` so that a probe without the
+    // flag has no executors in the process at all — the refusal is the
+    // absence of a capability, not a check in front of one.
+    let control = args.allow_control.then(|| {
+        let executors: Executors = registry
+            .projects()
+            .iter()
+            .filter_map(|p| {
+                executor_for(&p.manifest, &config).map(|e| {
+                    (
+                        p.name.clone(),
+                        Box::new(e) as Box<dyn ActionExecutor + Send>,
+                    )
+                })
+            })
+            .collect();
+        eprintln!(
+            "parallax-probe: control is ENABLED — anyone who can reach this probe can act on \
+             {} of this machine's project(s)",
+            executors.len()
+        );
+        Control::start(executors, Box::new(StdoutAudit), this_run())
+    });
+
+    probe.serve(&Serving {
+        registry: &registry,
+        config: &config,
+        peer: &peer,
+        control: control.as_ref(),
+    });
     ExitCode::SUCCESS
+}
+
+/// A marker for this run of this process.
+///
+/// **Its only job is to differ from the last run's.** A client reads a
+/// probe's "I have no record of that action" against the run that says
+/// it, because a ledger that was restarted has forgotten rather than
+/// never heard — and believing a restarted probe is how a merge happens
+/// twice.
+///
+/// The process id carries that on its own in practice; the start time is
+/// mixed in because a pid can be reused, and deliberately *not* relied
+/// on alone, because the Pi has no RTC and boots at the epoch.
+fn this_run() -> ProbeRun {
+    let since_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    ProbeRun::new(format!("{}-{since_epoch}", std::process::id()))
 }
 
 /// An environment variable, when it is set to something.

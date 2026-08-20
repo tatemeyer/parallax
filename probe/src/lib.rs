@@ -20,5 +20,6 @@
 
 #![warn(missing_docs)]
 
+pub mod control;
 pub mod server;
 pub mod state;
