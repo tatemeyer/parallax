@@ -37,6 +37,13 @@ impl std::fmt::Display for AdapterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AdapterError::Io(e) => write!(f, "reading source: {e}"),
+            // A body is usual and worth showing; an empty one is not a
+            // reason to print a colon with nothing after it. Tailscale's
+            // own 502 arrives with `Content-Length: 0`, which is exactly
+            // the case an operator most needs a sentence for.
+            AdapterError::Http { status, message } if message.is_empty() => {
+                write!(f, "http {status}")
+            }
             AdapterError::Http { status, message } => write!(f, "http {status}: {message}"),
             AdapterError::Parse(m) => write!(f, "unreadable response: {m}"),
             AdapterError::Unsupported(m) => write!(f, "no implementation for {m}"),
@@ -154,6 +161,19 @@ mod tests {
         assert!(AdapterError::Unsupported("window capture".into())
             .to_string()
             .contains("window capture"));
+    }
+
+    /// Tailscale's 502 arrives with `Content-Length: 0`, so this is not
+    /// hypothetical: it is what a stopped probe behind a live proxy
+    /// actually renders as, and it read `http 502:` — a colon promising
+    /// a reason that never came.
+    #[test]
+    fn a_status_with_no_body_does_not_render_a_dangling_colon() {
+        let e = AdapterError::Http {
+            status: 502,
+            message: String::new(),
+        };
+        assert_eq!(e.to_string(), "http 502");
     }
 
     struct StubWork;

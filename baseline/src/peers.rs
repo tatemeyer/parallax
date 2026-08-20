@@ -11,6 +11,7 @@
 //! is that a laptop went to sleep.
 
 use crate::adapters::http::{HttpRequest, HttpResponse, HttpTransport};
+use crate::adapters::AdapterError;
 use crate::freshness::DEFAULT_POLL_INTERVAL;
 use crate::state::{Degradation, ProjectState};
 use crate::wire::StateEnvelope;
@@ -128,6 +129,18 @@ impl<T: HttpTransport> PeerClient<T> {
             Ok(HttpResponse::NotModified) => {
                 return Err(self.failure("answered 304, but a probe sends no ETag"))
             }
+            // A gateway error means something is listening for this
+            // machine and the probe behind it is not — the shape you get
+            // from `tailscale serve` still proxying to a stopped probe,
+            // which is the ordinary way a peer goes down rather than an
+            // exotic one. The status alone does not say that, and
+            // Tailscale's 502 carries no body to say it either.
+            Err(AdapterError::Http { status, .. }) if (502..=504).contains(&status) => {
+                return Err(self.failure(format!(
+                    "http {status}: something is answering for this machine but the probe \
+                     behind it is not — check `systemctl --user status parallax-probe` there"
+                )))
+            }
             Err(e) => return Err(self.failure(e.to_string())),
         };
 
@@ -201,7 +214,6 @@ mod tests {
     use super::*;
     use crate::adapters::http::FixtureTransport;
     use crate::adapters::verification::{VerificationOutcome, VerificationStatus};
-    use crate::adapters::AdapterError;
     use crate::freshness::{Freshness, Observed};
 
     fn at(secs: u64) -> SystemTime {
@@ -305,6 +317,47 @@ mod tests {
         let failure = c.fetch(at(0)).unwrap_err();
         assert!(failure.reason.contains("connection refused"));
         assert_eq!(failure.last_success, None);
+    }
+
+    /// The ordinary way a peer goes down: the probe is stopped and
+    /// whatever publishes it keeps proxying, so the machine answers 502
+    /// rather than going quiet. Seen for real on a Pi behind
+    /// `tailscale serve`, whose 502 arrives with an empty body — so the
+    /// status is the only thing there, and the status alone does not say
+    /// which of the two is broken.
+    #[test]
+    fn a_gateway_error_says_the_probe_is_down_rather_than_only_the_status() {
+        let mut transport = FixtureTransport::new();
+        transport.fail_next(AdapterError::Http {
+            status: 502,
+            message: String::new(),
+        });
+        let mut c = PeerClient::new(transport, "https://tatepi.tail9e8086.ts.net");
+
+        let failure = c.fetch(at(0)).unwrap_err();
+        assert!(failure.reason.contains("502"), "got {}", failure.reason);
+        assert!(
+            failure.reason.contains("probe"),
+            "an operator is told a number and nothing to do about it: {}",
+            failure.reason
+        );
+    }
+
+    /// A 404 is a different thing entirely — the machine and its probe
+    /// are both fine and something else is wrong — so it must not
+    /// collect the gateway advice.
+    #[test]
+    fn a_non_gateway_status_keeps_its_own_message() {
+        let mut transport = FixtureTransport::new();
+        transport.fail_next(AdapterError::Http {
+            status: 404,
+            message: "no such path".into(),
+        });
+        let mut c = PeerClient::new(transport, "https://tatepi.tail9e8086.ts.net");
+
+        let failure = c.fetch(at(0)).unwrap_err();
+        assert!(failure.reason.contains("no such path"));
+        assert!(!failure.reason.contains("systemctl"));
     }
 
     #[test]
