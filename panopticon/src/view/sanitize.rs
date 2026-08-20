@@ -202,3 +202,6 @@ mod tests {
         }
     }
 }
+
+// TEMP: deliberate fmt violation to prove the gate fails red.
+pub fn   temp_gate_probe( ) -> u8 {   7   }
