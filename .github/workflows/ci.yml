@@ -117,11 +117,21 @@ jobs:
     needs: [build, test, fmt, clippy]
     runs-on: ubuntu-latest
     steps:
+      # Single quotes inside `${{ }}` are not a style choice: GitHub's
+      # expression syntax has no double-quoted string, and `" "` here
+      # makes the whole file invalid — which shows up as a run with no
+      # jobs named after the file rather than as an error on this line.
+      #
+      # Passed through `env` rather than interpolated into the script,
+      # so the value arrives as data. Expression output spliced straight
+      # into a shell command is the standard Actions injection bug, and
+      # it costs nothing to not have it.
       - name: Every job above must have succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          results='${{ join(needs.*.result, " ") }}'
-          echo "results: $results"
-          for result in $results; do
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
             if [ "$result" != "success" ]; then
               echo "::error::a required job reported '$result'"
               exit 1
