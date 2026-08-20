@@ -7,3 +7,5 @@
 //! rendering. The cockpit is this library's first frontend, not its
 //! only possible one.
 #![warn(missing_docs)]
+
+pub mod autonomy;
