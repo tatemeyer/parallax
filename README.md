@@ -8,14 +8,20 @@ them.
 TTUI is the first genuine external consumer, and the Plumb sub-project
 below is already running against it for real.
 
-**Status:** early. Sub-project #1 (Plumb) is implemented through Arc 5
-and in use; sub-project #2 (Baseline) is implemented through Arc 7 —
-manifests, adapters, aggregated state, and control actions — and is the
-deliverable the cockpit will consume. Everything else is specced or
-sketched, not built.
+**Status:** three of five sub-projects are built. Plumb (#1) is
+implemented through Arc 5 and in use. Baseline (#2) is implemented
+through Arc 7 — manifests, a registry, adapters, aggregated state with
+per-source freshness, and control actions. Panopticon (#3), the
+read-only cockpit, runs against the real repositories and renders
+recorded state deterministically for review. #4 and #5 are sketched.
 
 ## Repository layout
 
+- **`panopticon/`** — sub-project #3, the cockpit: a read-only TUI over
+  `baseline`, showing every registered project's work in flight,
+  verification standing, artifacts, sessions, and the age of each
+  source. Built on `ttui` as a published crate. See
+  [`panopticon/README.md`](panopticon/README.md).
 - **`baseline/`** — sub-project #2, the platform core: manifest parsing
   and validation, the normalized autonomy axes, the four adapter
   families, aggregated cross-project state with per-source freshness,
@@ -59,7 +65,7 @@ Five sub-projects, each with its own spec → plan cycle.
 |---|---|---|---|
 | 1 | `plumb` — perceptual verification | — | implemented through Arc 5 |
 | 2 | `parallax-baseline` — registry, manifest, transport | — | implemented through Arc 7 |
-| 3 | Cockpit: observe | 2, `ttui` | spec proposed, awaiting sign-off |
+| 3 | Cockpit: observe | 2, `ttui` | **implemented** |
 | 4 | Model-Experiments visualization | 3 | sketched |
 | 5 | Cockpit: full control | 3 | sketched |
 
