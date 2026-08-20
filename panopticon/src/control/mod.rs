@@ -151,6 +151,16 @@ impl Control {
         }
     }
 
+    /// Records that something was **not** attempted, and why.
+    ///
+    /// Distinct from an action that ran and failed: nothing was sent
+    /// anywhere. It still goes in the log, because a keypress that
+    /// silently does nothing is indistinguishable from one the cockpit
+    /// never received.
+    pub fn refuse(&mut self, summary: impl Into<String>, reason: impl Into<String>) {
+        self.note(summary.into(), reason.into(), false);
+    }
+
     fn note(&mut self, summary: String, result: String, ok: bool) {
         self.log.push(LogEntry {
             summary,

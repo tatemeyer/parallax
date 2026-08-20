@@ -326,7 +326,39 @@ impl Panopticon {
             .unwrap_or(0)
     }
 
+    /// The peer a row belongs to, and what that row is called, when the
+    /// selection is not on this machine.
+    fn selected_remote(&self) -> Option<(String, String)> {
+        let project = self.platform.projects.get(self.selected)?;
+        let peer = project.peer.clone()?;
+        Some((project.qualified_name(), peer))
+    }
+
     fn act(&mut self, action: Action) {
+        // Everything this cockpit can *do* reaches only the machine it
+        // runs on: its executors are built from local projects, and a
+        // build check is dispatched to the local refresh thread by a
+        // bare project name. A peer's row shares that bare name with the
+        // local clone beside it, so an unguarded `c` on the Pi's `sesh`
+        // would run a build against this machine's `sesh` — the wrong
+        // machine, silently, on a row that never changes to show it.
+        //
+        // Refused here rather than at each verb, so a verb added later
+        // is covered by default; `acts_on_the_selected_project` is
+        // exhaustive so adding one forces the decision.
+        if action.acts_on_the_selected_project() {
+            if let Some((name, peer)) = self.selected_remote() {
+                self.control.refuse(
+                    format!("{name}: {action:?}"),
+                    format!(
+                        "{name} is on {peer}. This cockpit acts only on the machine it runs on — \
+                         control across the wire is not built yet."
+                    ),
+                );
+                return;
+            }
+        }
+
         match action {
             Action::Down => {
                 let last = self.detail_len().saturating_sub(1);
@@ -584,6 +616,113 @@ mod tests {
             Clock::Frozen(at(0)),
             Duration::from_secs(30),
         )
+    }
+
+    /// A cockpit holding local `ttui` and `sesh`, plus a peer serving a
+    /// `sesh` of its own — the collision this whole guard exists for,
+    /// and the ordinary case: this desktop holds clones of everything.
+    fn cockpit_with_a_peers_clone() -> Panopticon {
+        let mut app = cockpit().with_peers(vec!["pi5".to_string()]);
+        app.apply(Update::PeerState {
+            peer: "pi5".into(),
+            projects: vec![ProjectState {
+                name: "sesh".into(),
+                ..Default::default()
+            }],
+        });
+        app
+    }
+
+    /// Selects the row whose qualified name matches, or fails loudly —
+    /// a test that silently acted on row 0 would prove the opposite of
+    /// what it claims.
+    fn select(app: &mut Panopticon, qualified: &str) {
+        app.selected = app
+            .platform
+            .projects
+            .iter()
+            .position(|p| p.qualified_name() == qualified)
+            .unwrap_or_else(|| panic!("no row named {qualified}"));
+    }
+
+    /// The bug this guard was written for. `c` on the Pi's `sesh` sent
+    /// `RunChecks { project: "sesh" }` — a bare name — to the local
+    /// refresh thread, which matched **this** machine's `sesh` and ran a
+    /// build on it. The operator's row never changed, and a different
+    /// row did.
+    #[test]
+    fn running_checks_on_a_peers_project_is_refused_rather_than_run_locally() {
+        let mut app = cockpit_with_a_peers_clone();
+        select(&mut app, "sesh@pi5");
+
+        app.act(Action::RunChecks);
+
+        let log = app.control.log();
+        assert_eq!(log.len(), 1, "the keypress vanished without a word");
+        assert!(!log[0].ok);
+        assert!(
+            log[0].result.contains("pi5"),
+            "the refusal must name the machine: {}",
+            log[0].result
+        );
+    }
+
+    /// Every verb that reaches an executor or the local refresh thread.
+    #[test]
+    fn no_verb_that_acts_on_a_project_reaches_a_peers_row() {
+        for action in [
+            Action::RunChecks,
+            Action::Merge,
+            Action::Label,
+            Action::RequestReview,
+            Action::Capture,
+            Action::Push,
+            Action::Uphold,
+            Action::Overrule,
+        ] {
+            let mut app = cockpit_with_a_peers_clone();
+            select(&mut app, "sesh@pi5");
+
+            app.act(action);
+
+            assert_eq!(
+                app.control.log().len(),
+                1,
+                "{action:?} was not refused on a remote row"
+            );
+            assert!(
+                app.control.prompt().is_none(),
+                "{action:?} put a confirmation on screen for an action it cannot perform"
+            );
+        }
+    }
+
+    /// And the guard must not swallow the local case, which is the one
+    /// that has to keep working.
+    #[test]
+    fn the_same_verbs_still_reach_a_local_project() {
+        let mut app = cockpit_with_a_peers_clone();
+        select(&mut app, "sesh");
+
+        app.act(Action::RunChecks);
+
+        assert!(
+            app.control.log().is_empty(),
+            "a local project was refused: {:?}",
+            app.control.log()
+        );
+    }
+
+    /// Moving and looking are never refused, however remote the row.
+    #[test]
+    fn navigation_is_never_refused_on_a_peers_row() {
+        let mut app = cockpit_with_a_peers_clone();
+        select(&mut app, "sesh@pi5");
+
+        for action in [Action::Down, Action::Up, Action::Tab(2), Action::Help] {
+            app.act(action);
+        }
+        assert!(app.control.log().is_empty());
     }
 
     fn press(code: KeyCode) -> Event {

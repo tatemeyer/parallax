@@ -54,6 +54,48 @@ pub enum Action {
     Quit,
 }
 
+impl Action {
+    /// Whether this verb does something **to the selected project**, as
+    /// opposed to moving the cursor, switching a pane, or refreshing
+    /// everything.
+    ///
+    /// The cockpit's executors and its build checks both reach only the
+    /// machine it runs on, so every verb that answers `true` has to be
+    /// refused when the selection is a peer's row. Without that, `c` on
+    /// the Pi's `sesh` runs a build against **this** machine's `sesh` —
+    /// silently, because the two rows differ only by a suffix and the
+    /// request travels as a bare name.
+    ///
+    /// Exhaustive on purpose. A verb added later must decide what it is,
+    /// because one that slipped through would act on the wrong machine
+    /// and say nothing.
+    pub fn acts_on_the_selected_project(&self) -> bool {
+        match self {
+            Action::RunChecks
+            | Action::Merge
+            | Action::Label
+            | Action::RequestReview
+            | Action::Capture
+            | Action::Push
+            | Action::Uphold
+            | Action::Overrule => true,
+
+            // Movement, display, and whole-platform verbs. `RunAllChecks`
+            // belongs here because it addresses every *local* project by
+            // its own list rather than anything under the cursor.
+            Action::Up
+            | Action::Down
+            | Action::NextPane
+            | Action::Tab(_)
+            | Action::Refresh
+            | Action::RunAllChecks
+            | Action::ActionLog
+            | Action::Help
+            | Action::Quit => false,
+        }
+    }
+}
+
 /// How long a partially-typed chord waits before it is forgotten.
 /// Nothing binds a chord yet; the timeout exists so one can be added
 /// without revisiting the loop.

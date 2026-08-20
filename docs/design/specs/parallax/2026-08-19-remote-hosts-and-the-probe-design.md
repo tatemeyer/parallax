@@ -284,6 +284,22 @@ one.
   a network, and executing a confirmed action through `LocalExecutor` on
   the host that owns the project. Its own spec, for the reason the
   roadmap already gives: control without observation is not useful.
+
+  **Deferring it is not the same as it being absent, and that had teeth.**
+  The cockpit's executors are built from local projects, and a build
+  check is dispatched to the local refresh thread by a *bare* project
+  name — which a peer's row shares with the clone sitting next to it.
+  Pressing `c` on the Pi's `sesh` therefore ran `cargo test` against
+  **this** machine's `sesh`: the wrong machine, silently, with the
+  operator's own row never changing to show it. The irreversible verbs
+  were saved only by an index falling off the end of the executor list,
+  and even then they asked for confirmation first and failed afterwards
+  with a reason that named the wrong cause.
+
+  Every verb that acts on the selected project is now refused on a
+  peer's row, once, before anything is offered — and says which machine
+  the row is on. A cockpit that can see a machine it cannot act on has
+  to be explicit about the second half, or the first half becomes a trap.
 - **A remote `CommandRunner`.** Once a probe exists, the machine that
   owns a project runs its own commands locally through the executor it
   already has. SSH would be a second way to do the same thing.
