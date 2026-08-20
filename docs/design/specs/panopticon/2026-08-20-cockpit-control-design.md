@@ -1,6 +1,6 @@
 # Cockpit: Full Control (Design)
 
-**Status:** implemented, except rulings. See *What changed in the building* at the end.
+**Status:** implemented. See *What changed in the building* at the end.
 **Date:** 2026-08-20
 
 **Place in the roadmap:** sub-project #5 of the Parallax platform
@@ -268,11 +268,16 @@ few enough to bind directly, and an overlay would be the second modal.
 **Question 3 answered: yes, deferred**, as designed, with
 `Unsupported` and a test.
 
-**Question 4 is still open, and rulings with it.** The findings list has
-not been built, so `u`/`o` are unbound and `RuleFinding` has no way to
-reach the executor from the cockpit. This is the one part of the design
-that is specified and not implemented, and it is the highest-leverage
-action in the platform — it should be the next arc, not a footnote.
+**Question 4 answered: the artifacts pane, not its own tab.** A run is
+one row and each of its findings is a row beneath it, which keeps the
+run's verdict word beside the findings it is a verdict on. Rulings are
+implemented: `u` upholds, `o` overrules, and the cursor on a run row
+rules on nothing, because "rule on this whole run" is not a thing Plumb
+has and offering it would write a ruling nothing suppresses.
+
+The evidence paragraph is deliberately not carried into the cockpit. It
+is written for a reader with the image in front of them, and the cockpit
+is not that reader.
 
 **A bug the tests did not catch and a capture did.** Windows reports a
 key release for every press. The binder filters them; the prompt's raw
