@@ -359,8 +359,7 @@ mod tests {
     #[test]
     fn a_registry_naming_only_peers_loads_and_is_not_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let registry =
-            registry_file(dir.path(), "peers:\n  - url: https://pi5.ts.net\n").unwrap();
+        let registry = registry_file(dir.path(), "peers:\n  - url: https://pi5.ts.net\n").unwrap();
 
         assert!(registry.projects().is_empty());
         assert_eq!(registry.peers().len(), 1);

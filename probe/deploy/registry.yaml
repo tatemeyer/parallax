@@ -1,0 +1,41 @@
+# A worked three-machine registry, as the cockpit reads it.
+#
+# Copy to ~/.parallax/registry.yaml and edit. Every machine can run the
+# same file with its own `projects:` — the cockpit is not special, it is
+# just whichever machine you happen to be sitting at.
+#
+#     panopticon --registry ~/.parallax/registry.yaml
+#
+apiVersion: parallax/v1
+
+# What is on THIS disk. Absolute, because a registry file is local
+# configuration that knows where a clone actually is — unlike a
+# `parallax.yaml`, which is checked in and gets cloned to different
+# paths on different machines.
+projects:
+  - root: C:/Users/tatem/Dev/Parallax
+  - root: C:/Users/tatem/Dev/TTUI
+  - root: C:/Users/tatem/Dev/SESH
+
+# What is on the other machines. URLs, not inventories: the Pi knows
+# what is on the Pi, and a list here saying otherwise would be wrong the
+# first time something changed over there.
+#
+# These are the names `tailscale serve` publishes, so they resolve on the
+# tailnet and nowhere else. Each probe binds 127.0.0.1 and is reachable
+# only through the address below.
+#
+# A peer is named by the first label of its host — `pi5`, `tates-laptop`
+# — and its projects appear as `sesh@pi5`. A machine that does not answer
+# keeps its row and says why.
+peers:
+  - url: https://pi5.tail-scale.ts.net
+  - url: https://tates-laptop.tail-scale.ts.net
+
+# Replace `tail-scale.ts.net` with your own tailnet name:
+#     tailscale status --json | jq -r .MagicDNSSuffix
+# or read it off `tailscale status`, which prints each machine's name.
+#
+# Leaving `projects:` out entirely is legitimate: a cockpit on a machine
+# holding no checkouts, watching the other two, is a supported setup and
+# starts normally.

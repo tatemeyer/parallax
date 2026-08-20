@@ -3,9 +3,9 @@
 //! (Task 14). **Neither links Plumb**: the `plumb` adapter reads the
 //! `verdict.md` Plumb writes, as text.
 
-use serde::{Deserialize, Serialize};
 use super::{AdapterError, ProjectContext};
 use crate::freshness::Observed;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;

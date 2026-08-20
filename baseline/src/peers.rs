@@ -118,10 +118,7 @@ impl<T: HttpTransport> PeerClient<T> {
     /// Fetches this peer's projects, already re-stamped, re-based, and
     /// tagged with the peer they came from.
     pub fn fetch(&mut self, client_now: SystemTime) -> Result<Vec<ProjectState>, PeerFailure> {
-        let request = HttpRequest::get(format!(
-            "{}{STATE_PATH}",
-            self.url.trim_end_matches('/')
-        ));
+        let request = HttpRequest::get(format!("{}{STATE_PATH}", self.url.trim_end_matches('/')));
 
         let body = match self.transport.send(&request) {
             Ok(HttpResponse::Ok { body, .. }) => body,
@@ -312,7 +309,10 @@ mod tests {
 
     #[test]
     fn a_peer_answering_with_nonsense_is_a_failure_rather_than_a_panic() {
-        let mut c = client("https://pi5.ts.net", Some("{\"not\":\"an envelope\"}".into()));
+        let mut c = client(
+            "https://pi5.ts.net",
+            Some("{\"not\":\"an envelope\"}".into()),
+        );
         let failure = c.fetch(at(0)).unwrap_err();
         assert!(
             failure.reason.contains("not a state envelope"),
@@ -384,7 +384,11 @@ mod tests {
     #[test]
     fn the_state_path_is_appended_once_even_to_a_trailing_slash() {
         let mut transport = FixtureTransport::new();
-        transport.insert("https://pi5.ts.net/state", envelope_json("pi5", "sesh", at(0)), None);
+        transport.insert(
+            "https://pi5.ts.net/state",
+            envelope_json("pi5", "sesh", at(0)),
+            None,
+        );
         let mut c = PeerClient::new(transport, "https://pi5.ts.net/");
         assert!(c.fetch(at(0)).is_ok(), "the URL was built wrong");
     }

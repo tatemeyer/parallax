@@ -1,5 +1,18 @@
 # Parallax — Master Design
 
+> **The numbering below has been retired.** This document specifies five
+> numbered sub-projects; the roadmap now names components that carry
+> arcs. See the [README](../../../../README.md) for the reasoning and
+> the current table, and
+> [`2026-08-19-remote-hosts-and-the-probe-design.md`](2026-08-19-remote-hosts-and-the-probe-design.md)
+> open question 1 for where the decision was made.
+>
+> Left in place rather than rewritten. This is an approved document and
+> what it decided is a matter of record — editing the numbers out would
+> erase the decision instead of superseding it. Read `#2` as `baseline`,
+> `#3` and `#5` as two arcs of `panopticon`, `#1` as `plumb`, and `#4` as
+> the Model-Experiments views.
+
 **Status:** approved. Sub-project #1 (Plumb) is implemented through Arc 5; sub-project #2 (`parallax-baseline`) has an approved plan at `docs/design/plans/parallax/2026-08-14-parallax-baseline-plan.md` and has not started.
 **Date:** 2026-08-14
 **Scope:** the master design binding TTUI, Model-Experiments, and

@@ -130,7 +130,9 @@ impl<T> ObservedWire<T> {
             .unwrap_or(Duration::ZERO);
         Observed {
             value: self.value,
-            observed_at: client_now.checked_sub(age).unwrap_or(SystemTime::UNIX_EPOCH),
+            observed_at: client_now
+                .checked_sub(age)
+                .unwrap_or(SystemTime::UNIX_EPOCH),
             source: match self.source {
                 SourceKindWire::Watched => SourceKind::Polled {
                     interval: peer_interval,
@@ -193,8 +195,16 @@ impl ProjectWire {
             work: state.work.map(ObservedWire::send),
             autonomy: state.autonomy,
             unmapped_labels: state.unmapped_labels,
-            verification: state.verification.into_iter().map(ObservedWire::send).collect(),
-            artifacts: state.artifacts.into_iter().map(ObservedWire::send).collect(),
+            verification: state
+                .verification
+                .into_iter()
+                .map(ObservedWire::send)
+                .collect(),
+            artifacts: state
+                .artifacts
+                .into_iter()
+                .map(ObservedWire::send)
+                .collect(),
             sessions: state.sessions.map(ObservedWire::send),
             degradations: state.degradations,
         }

@@ -328,26 +328,54 @@ laptop answered differently", not "the layout is wrong".
 
 #### Task 15: Deployment
 
-- [ ] `probe/README.md`: what it is, the loopback rule, and the one `tailscale serve --bg --https=443 http://127.0.0.1:8737` line.
-- [ ] A systemd **user** unit for the probe on the Pi, matching how `seshd` is installed rather than inventing a second pattern — see `SESH/deploy/`.
-- [ ] Note that the Pi builds on itself, so the probe is built there too.
-- [ ] A worked `registry.yaml` naming all three machines.
+- [x] `probe/README.md`: what it is, both rules, the flags, the routes, and the install.
+- [x] A systemd **user** unit, matching how `seshd` is installed rather than inventing a second pattern.
+- [x] Note that the Pi builds on itself, so the probe is built there too.
+- [x] A worked `registry.yaml` naming all three machines.
 
-**Verify:** probes on all three machines; `panopticon` on the laptop
-lists TTUI, Parallax, and SESH. Unplug the Pi and SESH's sources go
-unavailable within one poll interval, with nothing claiming `Live`.
+**Two things the unit gets deliberately different from `seshd`.** It is
+**not** tied to `graphical-session.target`: `seshd` needs
+`WAYLAND_DISPLAY` because it puts things on a television, while the probe
+draws nothing and answers a cockpit that may be in another room —
+stopping it when the TV session ends would stop it exactly when the
+machine is most likely to be watched from elsewhere. And it needs
+`loginctl enable-linger`, called out in the README because without it the
+Pi answers only while somebody is logged in, and that failure looks
+precisely like a network problem.
+
+**Unplanned addition, found while writing the unit.** The probe built its
+adapters with `AdapterConfig::default()`, so it had no GitHub token and
+every private repository degraded to a 404 — which is exactly what SESH
+did in the Arc 2 live run. It now takes `--github-token` and falls back
+to `$GITHUB_TOKEN` then `$GH_TOKEN`, mirroring panopticon, and the unit
+reads them from an `EnvironmentFile` so the token stays out of a file
+that gets committed.
+
+**Not yet verified:** the three-machine run. Tailscale is up on the
+desktop and the laptop; the Pi is awaiting a reboot. Two probes on two
+ports on this machine answer correctly, including an empty one.
 
 #### Task 16: The roadmap converts to named components
 
 Per the spec's resolved open question 1.
 
-- [ ] `README.md`: the roadmap table becomes named components with arcs, not numbered sub-projects. `panopticon` is one row with two shipped arcs, replacing #3 and #5.
-- [ ] Add `probe` as a component.
-- [ ] `docs/design/README.md`: add the `probe` arc, and say that components carry arcs and numbers are retired.
-- [ ] Update the master design's "five sub-projects" framing with a pointer rather than a rewrite — it is an approved document, and amending it in place would erase what it decided.
+- [x] `README.md`: the roadmap table becomes named components with arcs. `panopticon` is one row with its arcs listed, replacing #3 and #5.
+- [x] Add `probe` as a component, and to the repository layout.
+- [x] The status paragraph was stale — it still called control "sketched" after it shipped. Rewritten, and it now says the platform spans machines.
+- [x] `docs/design/README.md`: says directories are named for components, that numbers are retired, and where a component's design lives when it changes a shared contract.
+- [x] The master design gets a pointer, not a rewrite, with a translation table for its five numbers. It is an approved document; editing the numbers out would erase the decision rather than supersede it.
 
-**Verify:** no numbered sub-project reference survives outside the
-historical specs that were approved using them.
+**Correction to this task as planned.** It said "add the `probe` arc" to
+`docs/design/README.md`. There is no `probe/` spec directory and there
+should not be: what the probe introduced first is a platform-wide wire
+contract, so it is specified under `parallax/` — the same reason the
+registry and adapter factory live there rather than under a `baseline/`.
+The design README now states that rule instead of listing a directory
+that does not exist.
+
+**Verified:** the only surviving "sub-project" wording outside the
+historical approved specs is the sentence in the README explaining why
+the numbering was retired.
 
 ---
 

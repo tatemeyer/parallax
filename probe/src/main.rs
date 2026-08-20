@@ -18,6 +18,7 @@ mod server;
 mod state;
 
 use parallax_baseline::adapters::factory::AdapterConfig;
+use parallax_baseline::freshness::DEFAULT_POLL_INTERVAL;
 use parallax_baseline::registry::Registry;
 use server::{bind_address, serve, DEFAULT_PORT};
 use std::path::PathBuf;
@@ -34,6 +35,8 @@ USAGE:
     --registry <file>      Use the roots a registry file lists.
     --port <n>             Loopback port (default 8737).
     --peer <name>          How this machine names itself (default: hostname).
+    --github-token <tok>   Authenticate the GitHub work adapter. Falls
+                           back to $GITHUB_TOKEN, then $GH_TOKEN.
     -h, --help             This.
 
 The probe binds 127.0.0.1 only. Publish it with:
@@ -65,6 +68,7 @@ struct Args {
     registry: Option<PathBuf>,
     port: u16,
     peer: Option<String>,
+    github_token: Option<String>,
 }
 
 fn parse_args() -> Result<Option<Args>, String> {
@@ -73,6 +77,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         registry: None,
         port: DEFAULT_PORT,
         peer: None,
+        github_token: None,
     };
     let mut argv = std::env::args().skip(1);
     while let Some(flag) = argv.next() {
@@ -82,6 +87,7 @@ fn parse_args() -> Result<Option<Args>, String> {
             "--projects-root" => args.projects_root = Some(PathBuf::from(value()?)),
             "--registry" => args.registry = Some(PathBuf::from(value()?)),
             "--peer" => args.peer = Some(value()?),
+            "--github-token" => args.github_token = Some(value()?),
             "--port" => {
                 let raw = value()?;
                 args.port = raw.parse().map_err(|_| format!("`{raw}` is not a port"))?;
@@ -126,6 +132,19 @@ fn main() -> ExitCode {
         eprintln!("parallax-probe: {failure}");
     }
 
+    // Credential discovery is a frontend's job: `parallax-baseline` takes
+    // a token and never reads the environment, so it runs identically in
+    // a test. Somebody still has to look — without it every private
+    // repository degrades to a 404, and a cockpit two machines away
+    // reports a project this one simply is not allowed to see.
+    let config = AdapterConfig {
+        poll_interval: DEFAULT_POLL_INTERVAL,
+        github_token: args
+            .github_token
+            .or_else(|| non_empty("GITHUB_TOKEN"))
+            .or_else(|| non_empty("GH_TOKEN")),
+    };
+
     let peer = args.peer.unwrap_or_else(default_peer);
     let addr = match bind_address("127.0.0.1", args.port) {
         Ok(addr) => addr,
@@ -147,6 +166,11 @@ fn main() -> ExitCode {
         "parallax-probe: {peer} serving {} project(s) on http://{addr}",
         registry.projects().len()
     );
-    serve(&server, &registry, &AdapterConfig::default(), &peer);
+    serve(&server, &registry, &config, &peer);
     ExitCode::SUCCESS
+}
+
+/// An environment variable, when it is set to something.
+fn non_empty(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
 }

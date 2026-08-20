@@ -1,12 +1,12 @@
 //! The artifact family: files a run produced. Three built-in
 //! implementations — `figure`, `metrics`, `capture`.
 
-use serde::{Deserialize, Serialize};
 use super::{AdapterError, ProjectContext};
 use crate::adapters::verification::{parse_verdict, VerificationOutcome};
 use crate::freshness::Observed;
 use crate::manifest::ArtifactKind;
 use globset::GlobBuilder;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;

@@ -12,9 +12,7 @@ use parallax_baseline::adapters::verification::{
 use parallax_baseline::adapters::{AdapterError, ProjectContext};
 use parallax_baseline::freshness::Observed;
 use parallax_baseline::registry::Registry;
-use parallax_baseline::state::{
-    aggregate_project, split_by_cost, Degradation, ProjectState,
-};
+use parallax_baseline::state::{aggregate_project, split_by_cost, Degradation, ProjectState};
 use parallax_baseline::wire::StateEnvelope;
 use std::time::SystemTime;
 
@@ -44,7 +42,10 @@ impl VerificationAdapter for Deferred {
             VerificationStatus {
                 kind: self.kind.clone(),
                 outcome: VerificationOutcome::NotRun,
-                detail: Some(format!("not run by the probe: `{}` runs a build", self.command)),
+                detail: Some(format!(
+                    "not run by the probe: `{}` runs a build",
+                    self.command
+                )),
             },
             now,
         ))
@@ -195,7 +196,10 @@ mod tests {
         let envelope = envelope(&registry, &AdapterConfig::default(), "pi5", at(7));
         assert_eq!(envelope.peer, "pi5");
         assert_eq!(envelope.now, at(7));
-        assert_eq!(envelope.api_version, parallax_baseline::wire::WIRE_API_VERSION);
+        assert_eq!(
+            envelope.api_version,
+            parallax_baseline::wire::WIRE_API_VERSION
+        );
     }
 
     /// One unreadable project must not blank the machine.

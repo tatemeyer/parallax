@@ -1,10 +1,10 @@
 //! The work family: issues, pull requests, their labels, and their
 //! check status. One built-in implementation (`github`, Task 12).
 
-use serde::{Deserialize, Serialize};
 use super::http::{HttpRequest, HttpResponse, HttpTransport};
 use super::{AdapterError, ProjectContext};
 use crate::freshness::{Observed, DEFAULT_POLL_INTERVAL};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 

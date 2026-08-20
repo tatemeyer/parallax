@@ -1,0 +1,51 @@
+[Unit]
+Description=Parallax probe — serves this machine's platform state on loopback
+Documentation=https://github.com/tatemeyer/parallax
+
+# Deliberately NOT tied to graphical-session.target, which is how SESH's
+# own unit is wired. `seshd` needs WAYLAND_DISPLAY because it puts things
+# on a television; the probe draws nothing and answers a cockpit that may
+# be in another room. Binding it to the graphical session would stop it
+# the moment the TV session ended, which is exactly when you are most
+# likely to be looking at this machine from somewhere else.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# A **user** unit, like seshd, because the projects it scans live in this
+# user's home and a root daemon reading them would be the wrong identity.
+# That means it needs lingering enabled, or it starts at login and stops
+# at logout:
+#
+#     sudo loginctl enable-linger $USER
+#
+# Without that line the Pi answers only while somebody is logged in,
+# which is the failure that looks exactly like a network problem.
+ExecStart=%h/.local/bin/parallax-probe \
+  --projects-root %h/Dev \
+  --port 8737
+
+# The GitHub token, if this machine holds private repositories. Kept out
+# of the unit file so the unit can be committed and the token cannot:
+#     mkdir -p %h/.config/parallax
+#     printf 'GITHUB_TOKEN=ghp_...\n' > %h/.config/parallax/probe.env
+#     chmod 600 %h/.config/parallax/probe.env
+# Optional: without it a private repo's work feed degrades to a 404,
+# which the cockpit shows honestly rather than hiding.
+EnvironmentFile=-%h/.config/parallax/probe.env
+
+Restart=always
+RestartSec=5
+
+# It binds loopback, reads a few directories, and talks to GitHub. None
+# of that needs anything else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_INET AF_INET6
+
+[Install]
+WantedBy=default.target

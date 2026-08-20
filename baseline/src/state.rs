@@ -4,7 +4,6 @@
 //! intact, because a blank view is a worse failure than a number
 //! labelled stale.
 
-use serde::{Deserialize, Serialize};
 use crate::adapters::artifact::{Artifact, ArtifactAdapter};
 use crate::adapters::session::{Session, SessionAdapter};
 use crate::adapters::verification::{CheckCost, VerificationAdapter, VerificationStatus};
@@ -13,6 +12,7 @@ use crate::adapters::{AdapterError, ProjectContext};
 use crate::autonomy::{resolve, Resolution};
 use crate::freshness::{Freshness, Observed};
 use crate::validate::Validated;
+use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
 /// The adapters serving one project. Every family is optional, because
@@ -54,9 +54,7 @@ impl ProjectAdapters {
 /// is how something ends up running `cargo test` on a timer, and the
 /// probe makes that worse rather than better: three machines can then
 /// trigger it at once.
-pub fn split_by_cost(
-    adapters: &mut ProjectAdapters,
-) -> Vec<Box<dyn VerificationAdapter + Send>> {
+pub fn split_by_cost(adapters: &mut ProjectAdapters) -> Vec<Box<dyn VerificationAdapter + Send>> {
     let mut reading = Vec::new();
     let mut executing = Vec::new();
     for adapter in adapters.verification.drain(..) {

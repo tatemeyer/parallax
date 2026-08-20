@@ -161,7 +161,12 @@ fn control_for(
 /// Turns the chosen source into projects and a clock.
 /// What a source resolves to: the projects and their adapters, the
 /// clock to read, and whether this run is allowed to act.
-type Loaded = (Vec<(Validated, ProjectAdapters)>, Vec<BoxedPeer>, Clock, bool);
+type Loaded = (
+    Vec<(Validated, ProjectAdapters)>,
+    Vec<BoxedPeer>,
+    Clock,
+    bool,
+);
 
 /// Returns the projects, the clock, and whether this run may act.
 fn load(source: Source, config: &AdapterConfig) -> Result<Loaded, String> {

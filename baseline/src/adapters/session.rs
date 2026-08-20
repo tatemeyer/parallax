@@ -2,10 +2,10 @@
 //! show what is running where. One built-in implementation, a
 //! filesystem scan (Task 17).
 
-use serde::{Deserialize, Serialize};
 use super::{AdapterError, ProjectContext};
 use crate::adapters::artifact::{outermost_dirs, scan_glob};
 use crate::freshness::Observed;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
