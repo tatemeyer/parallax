@@ -1,6 +1,9 @@
 # Parallax — Remote Hosts and the Probe (Design)
 
-**Status:** proposed — awaiting sign-off. Amends an approved spec.
+**Status:** approved 2026-08-20, with its defaults intact. Amends an
+approved spec. Implemented on `spec/remote-probe`; every deviation
+implementation forced is recorded in the plan beside the task that
+forced it, rather than edited back into this document.
 **Date:** 2026-08-19
 
 **Amends:**
@@ -383,14 +386,20 @@ one.
    arc, because what it specifies first is a platform-wide contract —
    the wire format — and that is the same reason the registry and
    adapter-factory design lives there rather than under `baseline`.
-2. **Should the probe serve the local registry, or a configured subset?**
-   Serving everything with a `parallax.yaml` is the zero-configuration
-   answer and matches `Registry::scan`. A host that wanted to publish
-   only some of its projects has no way to say so.
-3. **How are peer-qualified names rendered?** `sesh@pi5` is the obvious
-   spelling and it is a cockpit decision, not a baseline one — but the
-   qualification has to exist in the state for the cockpit to render it.
-4. **Does the probe need `GET /state` per project?** Fetching one
-   project is cheaper when a cockpit is focused on one row, and it is
-   speculative until the refresh cycle is measured against three real
-   machines.
+2. **Resolved — the probe serves its whole local registry.** Everything
+   with a `parallax.yaml` is the zero-configuration answer and matches
+   `Registry::scan`. A host that wants to publish only some of its
+   projects still has no way to say so; the escape hatch stays unbuilt
+   on the precedent `factory.rs` sets for `runs:` — deliberately not
+   added while nothing needs it.
+3. **Resolved — `sesh@pi5`, in the rail and the detail header.**
+   `ProjectState::qualified_name` holds the identity and the cockpit
+   spells it. This turned out to be the smaller half of the question:
+   the rows also had to be told apart by everything that *acts* on them,
+   and were not — see the non-goal on control above.
+4. **Still open: does the probe need `GET /state` per project?**
+   Fetching one project is cheaper when a cockpit is focused on one row.
+   Still speculative, and now measurable: a sweep is bounded by the
+   transport timeouts rather than unbounded, so the question is whether
+   the bound is comfortable across three real machines rather than
+   whether one exists.
