@@ -94,7 +94,11 @@ impl Courier {
     }
 
     /// A courier that carries nothing, for a cockpit with no peers it
-    /// may act on — including every fixture run.
+    /// may act on.
+    ///
+    /// Not the fixture-mode default any more: a fixture peer that
+    /// recorded a control surface is carried to, over a transport that
+    /// cannot reach it. See `fixtures::CONTROL_SUFFIX`.
     pub fn idle() -> Self {
         Self::spawn(Vec::new())
     }

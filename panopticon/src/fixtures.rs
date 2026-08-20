@@ -23,6 +23,8 @@ use parallax_baseline::peers::{PeerClient, STATE_PATH};
 use parallax_baseline::registry::Registry;
 use parallax_baseline::state::ProjectAdapters;
 use parallax_baseline::validate::Validated;
+use std::collections::BTreeMap;
+use std::net::IpAddr;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -36,6 +38,19 @@ pub struct FixtureSet {
     /// than a network. A cockpit showing three machines is exactly as
     /// reproducible as one showing three directories.
     pub peers: Vec<BoxedPeer>,
+    /// Every recorded peer that also recorded a control surface.
+    ///
+    /// Usually shorter than `peers`, and empty in most fixture sets:
+    /// control is opt-in per machine in a deployment, and a fixture set
+    /// spells that with the presence of a file. See [`CONTROL_SUFFIX`].
+    ///
+    /// **Recordings, not submitters.** This module reads files; it does
+    /// not build the thing that acts. `main.rs` turns these into
+    /// submitters, because the composition root is the one place allowed
+    /// to decide what this run may act on — a rule `tests/read_only.rs`
+    /// enforces by refusing to let any other file so much as name
+    /// baseline's actions module.
+    pub control: Vec<RecordedControl>,
 }
 
 /// The file naming the frozen instant, as Unix seconds.
@@ -45,6 +60,127 @@ pub const GITHUB_DIR: &str = "github";
 /// Where recorded peer envelopes live: one `<name>.json` per machine,
 /// each holding exactly what that machine's probe would have served.
 pub const PEERS_DIR: &str = "peers";
+
+/// What a peer's recorded control surface is called: `<name>.control.json`.
+///
+/// **Its presence is what gives a fixture peer control**, mirroring
+/// `--allow-control` on a real probe — where the machine that would
+/// execute is the one that decides. A peer with no such file is watched
+/// and not acted on, which is the default in a fixture set exactly as
+/// it is in a deployment.
+pub const CONTROL_SUFFIX: &str = ".control.json";
+
+/// How a fixture cockpit names itself in an action it submits.
+///
+/// Pinned, with [`FIXTURE_RUN`], so that ids are `fixture-0-1`,
+/// `fixture-0-2`, and so on. A recorded reply has to name the id it is
+/// answering about, which means the ids cannot come from a clock.
+pub const FIXTURE_CLIENT: &str = "fixture";
+
+/// The run a fixture cockpit submits in. See [`FIXTURE_CLIENT`].
+pub const FIXTURE_RUN: u64 = 0;
+
+/// A peer's recorded control surface.
+///
+/// Read by hand rather than derived, because this crate takes
+/// `serde_json` and deliberately not `serde` — and because two fields
+/// typed out here can name the file in every complaint, which a derive
+/// cannot.
+///
+/// **The bodies are recorded verbatim rather than typed as replies.** A
+/// probe answering something the cockpit cannot parse is a case the
+/// cockpit has distinct behaviour for — it reports the action's fate as
+/// unknown rather than as refused, because an unreadable answer is not a
+/// no — and a fixture that could not record one could not photograph
+/// that behaviour. The file must be valid JSON; the bodies inside it
+/// need not be replies this version understands.
+pub struct RecordedControl {
+    /// Which machine recorded it.
+    pub peer: String,
+    /// The base URL that machine is reached at — synthesized from its
+    /// name, and therefore unable to resolve. See
+    /// [`refuse_a_name_that_could_resolve`].
+    pub url: String,
+    /// The body `POST /action` answers with.
+    pub submit: serde_json::Value,
+    /// The body `GET /action/<id>` answers with, per id.
+    ///
+    /// An id with no entry here is a machine that accepted an action and
+    /// then said nothing about it — not a gap in the fixture but the
+    /// case the whole `Unknown` standing exists for.
+    pub status: BTreeMap<String, serde_json::Value>,
+}
+
+impl RecordedControl {
+    /// Reads one, naming `file` in anything it complains about.
+    ///
+    /// Unknown keys are refused. A person types this file, so a typo is
+    /// the likely reading of `submitt:` — the same argument that makes
+    /// strictness right for a manifest and wrong for a wire format
+    /// between machines that upgrade at different times.
+    fn parse(text: &str, file: &Path, peer: &str, url: &str) -> Result<Self, String> {
+        let at = |what: &str| format!("fixture control {}: {what}", file.display());
+        let value: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| at(&format!("{e}")))?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| at("expected an object with a `submit` key"))?;
+        for key in object.keys() {
+            if key != "submit" && key != "status" {
+                return Err(at(&format!(
+                    "`{key}` is not a key here; expected `submit` or `status`"
+                )));
+            }
+        }
+        let submit = object
+            .get("submit")
+            .ok_or_else(|| at("no `submit`: a control surface has to answer a submission"))?
+            .clone();
+        let mut status = BTreeMap::new();
+        if let Some(recorded) = object.get("status") {
+            let replies = recorded
+                .as_object()
+                .ok_or_else(|| at("`status` maps an action id to the reply for it"))?;
+            for (id, reply) in replies {
+                status.insert(id.clone(), reply.clone());
+            }
+        }
+        Ok(Self {
+            peer: peer.to_string(),
+            url: url.to_string(),
+            submit,
+            status,
+        })
+    }
+}
+
+/// Refuses a fixture peer name that could name a machine on a network.
+///
+/// A peer's URL is synthesized from its file name, so the name is the
+/// only thing standing between a fixture run and a real address. A bare
+/// label cannot resolve; a dotted name or an address can.
+///
+/// **`FixtureTransport` makes this redundant today** — it holds a map
+/// and has no socket, so even a resolvable name reaches nothing. It is
+/// checked anyway, because the guarantee should not rest on the current
+/// implementation of a transport that could reasonably grow a
+/// passthrough for recording, and because a fixture set is data, which
+/// is the part of a system that gets copied without its reasons.
+fn refuse_a_name_that_could_resolve(name: &str) -> Result<(), String> {
+    if name.parse::<IpAddr>().is_ok() {
+        return Err(format!(
+            "`{name}` is an address, and a fixture peer is named by a bare label so that \
+             nothing here can reach a machine"
+        ));
+    }
+    if name.contains('.') {
+        return Err(format!(
+            "`{name}` looks like a host name, and a fixture peer is named by a bare label \
+             so that nothing here can reach a machine"
+        ));
+    }
+    Ok(())
+}
 
 /// Loads a fixture directory.
 ///
@@ -58,7 +194,7 @@ pub fn load(dir: &Path) -> Result<FixtureSet, String> {
     if let Some(failure) = registry.failures().first() {
         return Err(format!("fixture {failure}"));
     }
-    let peers = load_peers(dir)?;
+    let (peers, control) = load_peers(dir)?;
     if registry.is_empty() && peers.is_empty() {
         return Err(format!(
             "{} holds no project directories with a parallax.yaml and no {PEERS_DIR}/",
@@ -90,6 +226,7 @@ pub fn load(dir: &Path) -> Result<FixtureSet, String> {
         now,
         projects,
         peers,
+        control,
     })
 }
 
@@ -101,34 +238,67 @@ pub fn load(dir: &Path) -> Result<FixtureSet, String> {
 /// that could reach a network is not a fixture. An absent `peers/`
 /// directory is a fixture set with no peers, not an error: every
 /// recording made before remote hosts existed still loads.
-fn load_peers(dir: &Path) -> Result<Vec<BoxedPeer>, String> {
+fn load_peers(dir: &Path) -> Result<(Vec<BoxedPeer>, Vec<RecordedControl>), String> {
     let Ok(entries) = std::fs::read_dir(dir.join(PEERS_DIR)) else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     };
     // Sorted: `read_dir` order is filesystem-defined, and two runs must
     // put the same machine in the same row.
+    //
+    // Control files are filtered out rather than treated as machines:
+    // `pi5.control.json` has the extension and would otherwise load as a
+    // peer named `pi5.control` — which the name check would then refuse,
+    // reporting a typo nobody made.
     let mut files: Vec<std::path::PathBuf> = entries
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .filter(|p| !p.to_string_lossy().ends_with(CONTROL_SUFFIX))
         .collect();
     files.sort();
 
     let mut peers = Vec::new();
+    let mut control = Vec::new();
     for file in files {
         let name = file
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .ok_or_else(|| format!("fixture peer {} has no name", file.display()))?;
+        refuse_a_name_that_could_resolve(&name)
+            .map_err(|why| format!("fixture peer {}: {why}", file.display()))?;
         let body = std::fs::read_to_string(&file)
             .map_err(|e| format!("fixture peer {}: {e}", file.display()))?;
         let url = format!("https://{name}");
         let mut transport = FixtureTransport::new();
         transport.insert(format!("{url}{STATE_PATH}"), body, None);
+
+        if let Some(recorded) = recorded_control(dir, &name, &url)? {
+            control.push(recorded);
+        }
+
         let transport: Box<dyn HttpTransport + Send> = Box::new(transport);
         peers.push(PeerClient::new(transport, url));
     }
-    Ok(peers)
+    Ok((peers, control))
+}
+
+/// The contents of `peers/<name>.control.json`, if there is one.
+///
+/// `None` means this machine has no control surface — the fixture-set
+/// spelling of a probe started without `--allow-control`.
+///
+/// A file that is present but unreadable is an error rather than a
+/// silent `None`. A fixture set that half-loads is worse than one that
+/// refuses: the cockpit would render the machine as un-actable and the
+/// operator would believe it.
+fn recorded_control(dir: &Path, name: &str, url: &str) -> Result<Option<RecordedControl>, String> {
+    let file = dir.join(PEERS_DIR).join(format!("{name}{CONTROL_SUFFIX}"));
+    if !file.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(&file)
+        .map_err(|e| format!("fixture control {}: {e}", file.display()))?;
+    RecordedControl::parse(&text, &file, name, url).map(Some)
 }
 
 /// Reads the frozen instant. A fixture set without one is rejected
@@ -238,5 +408,115 @@ mod tests {
         std::fs::write(dir.path().join(CLOCK_FILE), "1700000000").unwrap();
         let err = error_from(dir.path());
         assert!(err.contains("no project directories"), "got {err}");
+    }
+
+    /// A bare label is the only shape a fixture peer may have, because
+    /// the URL is built from it and a fixture that could reach a network
+    /// is not a fixture.
+    #[test]
+    fn a_peer_name_that_could_name_a_real_machine_is_refused() {
+        assert!(refuse_a_name_that_could_resolve("pi5").is_ok());
+        assert!(refuse_a_name_that_could_resolve("tates-laptop").is_ok());
+        for hostile in ["pi5.tail-scale.ts.net", "10.0.0.4", "::1", "127.0.0.1"] {
+            let err = refuse_a_name_that_could_resolve(hostile)
+                .expect_err("accepted a name that could reach a machine");
+            assert!(err.contains(hostile), "got {err}");
+        }
+    }
+
+    /// The operator is looking at a directory, so the complaint has to
+    /// name the file rather than only the rule it broke.
+    #[test]
+    fn a_refused_peer_name_is_reported_against_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(CLOCK_FILE), "1700000000").unwrap();
+        std::fs::create_dir_all(dir.path().join(PEERS_DIR)).unwrap();
+        std::fs::write(dir.path().join(PEERS_DIR).join("10.0.0.4.json"), "{}").unwrap();
+
+        let err = error_from(dir.path());
+        assert!(err.contains("10.0.0.4.json"), "got {err}");
+    }
+
+    /// Control is opt-in per machine, and a fixture set spells that with
+    /// the presence of a file — so a control file must not also load as
+    /// a machine of its own.
+    #[test]
+    fn a_control_file_is_not_mistaken_for_a_machine() {
+        let set = load(&fixtures()).unwrap();
+        let names: Vec<&str> = set.peers.iter().map(|p| p.name()).collect();
+        assert_eq!(names, ["pi5", "tates-laptop"]);
+    }
+
+    /// The shipped fixture set covers both answers a real deployment
+    /// gives: one machine that may be asked, one that may only be
+    /// watched.
+    #[test]
+    fn exactly_one_shipped_machine_recorded_a_control_surface() {
+        let set = load(&fixtures()).unwrap();
+        let controlled: Vec<&str> = set.control.iter().map(|c| c.peer.as_str()).collect();
+        assert_eq!(controlled, ["pi5"]);
+        assert_eq!(set.control[0].url, "https://pi5");
+    }
+
+    #[test]
+    fn a_peer_with_no_control_file_records_no_control_surface() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(CLOCK_FILE), "1700000000").unwrap();
+        std::fs::create_dir_all(dir.path().join(PEERS_DIR)).unwrap();
+        std::fs::write(
+            dir.path().join(PEERS_DIR).join("laptop.json"),
+            r#"{"apiVersion":"parallax/v1","peer":"laptop","now":{"secs_since_epoch":1700000000,"nanos_since_epoch":0},"projects":[]}"#,
+        )
+        .unwrap();
+
+        let set = load(dir.path()).expect("a peer-only fixture set loads");
+        assert_eq!(set.peers.len(), 1);
+        assert!(
+            set.control.is_empty(),
+            "a machine gained control from nothing"
+        );
+    }
+
+    /// A fixture set that half-loads is worse than one that refuses: the
+    /// cockpit would render the machine as un-actable and the operator
+    /// would believe it.
+    #[test]
+    fn a_control_file_that_cannot_be_read_is_an_error_rather_than_no_control() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(CLOCK_FILE), "1700000000").unwrap();
+        std::fs::create_dir_all(dir.path().join(PEERS_DIR)).unwrap();
+        std::fs::write(
+            dir.path().join(PEERS_DIR).join("laptop.json"),
+            r#"{"apiVersion":"parallax/v1","peer":"laptop","now":{"secs_since_epoch":1700000000,"nanos_since_epoch":0},"projects":[]}"#,
+        )
+        .unwrap();
+        let control = dir.path().join(PEERS_DIR).join("laptop.control.json");
+
+        std::fs::write(&control, "{ not json").unwrap();
+        assert!(error_from(dir.path()).contains("laptop.control.json"));
+
+        // A typo is the likely reading of an unknown key, and a fixture
+        // that ignored one would silently record nothing.
+        std::fs::write(&control, r#"{"submitt":{"result":"refused"}}"#).unwrap();
+        let err = error_from(dir.path());
+        assert!(err.contains("submitt"), "got {err}");
+
+        std::fs::write(&control, r#"{"status":{}}"#).unwrap();
+        let err = error_from(dir.path());
+        assert!(err.contains("submit"), "got {err}");
+    }
+
+    /// The bodies are recorded verbatim, including one this version
+    /// cannot parse — which is a case the cockpit has behaviour for, not
+    /// a broken fixture. See `fixtures/peers/README.md`.
+    #[test]
+    fn a_recorded_reply_is_kept_even_when_this_version_cannot_read_it() {
+        let set = load(&fixtures()).unwrap();
+        let recorded = &set.control[0];
+        assert_eq!(recorded.submit["result"], "queued");
+        assert!(
+            recorded.status.is_empty(),
+            "a machine that says nothing about an action is the point of this recording"
+        );
     }
 }

@@ -285,8 +285,19 @@ deterministic.
 The second is probably right and is not this arc's to decide, because it
 amends an approved non-goal. Raised as open question 4 on the spec.
 
+**Unblocked.** Question 4 was answered yes, and the second option built
+as its own arc — see
+`docs/design/specs/parallax/2026-08-20-the-recorded-submitter-design.md`.
+A fixture peer may now record its control surface, and the two scenarios
+below exist. `cockpit-peer` kept its subject, because the machine that
+records a control surface is a *different* machine from the one it
+refuses on — which turned out to be a better test than the original: a
+cockpit that refused every remote row would have passed the old version
+and been wrong.
+
 - [x] The control-disabled refusal, in `cockpit-peer`, with its intent corrected.
-- [ ] The remote prompt and the `unknown` entry — blocked on the question above.
+- [x] The remote prompt, in `cockpit-remote-confirm`.
+- [x] The `unknown` entry, in `cockpit-unknown`.
 
 #### Task 18: The roadmap
 

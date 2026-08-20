@@ -1,0 +1,58 @@
+{
+  "apiVersion": "parallax/v1",
+  "peer": "pi5",
+  "now": { "secs_since_epoch": 1700000000, "nanos_since_epoch": 0 },
+  "projects": [
+    {
+      "name": "sesh",
+      "language": "rust",
+      "methodology": "methodology-first",
+      "work": {
+        "value": {
+          "items": [
+            {
+              "number": 8,
+              "title": "Recorder drops the last frame when a session exits fast",
+              "kind": "PullRequest",
+              "state": "Open",
+              "labels": ["ready-to-merge"],
+              "checks": { "passed": 4, "failed": 0, "pending": 0 },
+              "url": "https://github.com/tatemeyer/sesh/pull/8",
+              "updated_at": "2023-11-14T22:10:00Z"
+            },
+            {
+              "number": 6,
+              "title": "Attach to a session that is already being watched",
+              "kind": "Issue",
+              "state": "Open",
+              "labels": [],
+              "checks": { "passed": 0, "failed": 0, "pending": 0 },
+              "url": "https://github.com/tatemeyer/sesh/issues/6",
+              "updated_at": "2023-11-14T21:44:00Z"
+            }
+          ]
+        },
+        "observedAt": { "secs_since_epoch": 1699999820, "nanos_since_epoch": 0 },
+        "source": { "kind": "polled", "interval_secs": 30 }
+      },
+      "verification": [
+        {
+          "value": { "kind": "tests", "outcome": "Pass", "detail": "41 passed" },
+          "observedAt": { "secs_since_epoch": 1699999900, "nanos_since_epoch": 0 },
+          "source": { "kind": "watched" }
+        }
+      ],
+      "sessions": {
+        "value": [
+          {
+            "name": "recorder-tail",
+            "path": "/home/operator/SESH",
+            "last_activity": { "secs_since_epoch": 1699999940, "nanos_since_epoch": 0 }
+          }
+        ],
+        "observedAt": { "secs_since_epoch": 1700000000, "nanos_since_epoch": 0 },
+        "source": { "kind": "watched" }
+      }
+    }
+  ]
+}
