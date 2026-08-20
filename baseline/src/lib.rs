@@ -9,3 +9,4 @@
 #![warn(missing_docs)]
 
 pub mod autonomy;
+pub mod manifest;
