@@ -130,17 +130,20 @@ fn a_refresh_cycle_runs_no_command_and_an_explicit_request_does() {
 
     let refresher = Refresher::spawn(vec![(validated("ttui"), adapters)], Clock::Frozen(at(0)));
 
-    // A full refresh cycle, and then some.
+    // Five refresh cycles, each allowed to finish before the next is
+    // asked for.
+    //
+    // They used to be fired back-to-back and waited on together. That
+    // now proves less than it looks: read-refreshes that queue up while
+    // one is running collapse into a single sweep, so five requests
+    // would mean one cycle. The claim here is about five *cycles* each
+    // running no build, so they are separated rather than counted.
     for _ in 0..5 {
         refresher.request(Request::RefreshReads);
+        wait_for(&refresher, |updates| {
+            updates.iter().any(|u| matches!(u, Update::Project(_)))
+        });
     }
-    wait_for(&refresher, |updates| {
-        updates
-            .iter()
-            .filter(|u| matches!(u, Update::Project(_)))
-            .count()
-            >= 5
-    });
     assert_eq!(
         calls.load(Ordering::SeqCst),
         0,

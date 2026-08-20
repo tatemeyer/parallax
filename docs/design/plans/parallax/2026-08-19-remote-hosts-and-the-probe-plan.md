@@ -311,6 +311,16 @@ and one list cannot hold two concrete types.
 **Verified:** a peer's projects arrive as `sesh@pi5` with correct ages
 under a frozen clock, with no network in the test.
 
+**Follow-on, once peers could be slow.** The cadence fires every poll
+interval whether or not the last cycle finished. That was harmless when
+a cycle meant a disk read and a GitHub poll; a peer that has to time out
+costs most of an interval by itself, so two dead machines and the sweep
+no longer fits between two ticks — and every sweep that runs late makes
+the next one later, permanently. Read-refreshes that queue up while one
+is running now collapse into a single sweep. Nothing else collapses:
+`Stop` must arrive and a `RunChecks` somebody pressed must run, because
+losing asked-for work is a worse bug than being slow.
+
 #### Task 13: An unreachable peer degrades only itself
 
 - [x] A failed fetch becomes `Update::PeerFailed`, and the cockpit adds a degradation to that peer's rows — which `sources()` already reports as `Freshness::Unavailable`.
