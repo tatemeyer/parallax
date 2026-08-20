@@ -375,3 +375,159 @@ fn the_blocker_banner_names_whose_blocker_it_is() {
 {screen}"
     );
 }
+
+/// A project whose every **observed** field is packed with escape
+/// sequences and raw control characters.
+///
+/// Deliberately not a plausible one: every string here is the sort of
+/// thing a real tool emits, all at once. `pytest`, `cargo` and `npm`
+/// colour their output by default, a branch name can hold anything a
+/// person typed, and an adapter's error carries whatever the process
+/// said on the way down.
+fn hostile_project() -> ProjectState {
+    use parallax_baseline::adapters::artifact::{Artifact, ArtifactDetail, RunFinding};
+    use parallax_baseline::adapters::session::Session;
+    use parallax_baseline::manifest::ArtifactKind;
+    use std::path::PathBuf;
+
+    let mut p = ProjectState {
+        name: "ttui".to_string(),
+        ..Default::default()
+    };
+
+    // The line from the issue, verbatim.
+    p.verification.push(Observed::watched(
+        VerificationStatus {
+            kind: "tests".into(),
+            outcome: VerificationOutcome::Fail,
+            detail: Some(
+                "\u{1b}[33m======= \u{1b}[33mno tests ran\u{1b}[0m\u{1b}[33m in 0.01s\u{1b}[0m"
+                    .into(),
+            ),
+        },
+        at(0),
+    ));
+
+    p.work = Some(Observed::polled(
+        WorkSnapshot {
+            items: vec![WorkItem {
+                number: 1,
+                title: "\u{1b}[1;31mfix:\u{1b}[0m a title that\u{1b}[2J clears the screen".into(),
+                kind: WorkKind::PullRequest,
+                state: WorkState::Open,
+                labels: vec![],
+                checks: ChecksSummary::none(),
+                url: String::new(),
+                updated_at: "2026-08-19T00:00:00Z".into(),
+            }],
+        },
+        at(0),
+        DEFAULT_POLL_INTERVAL,
+    ));
+
+    p.sessions = Some(Observed::watched(
+        vec![Session {
+            // A directory name really can hold an escape.
+            name: "agent\u{1b}[1;1H-run\ttwo".into(),
+            path: PathBuf::from("/tmp/agent"),
+            last_activity: at(0),
+        }],
+        at(0),
+    ));
+
+    p.artifacts.push(Observed::watched(
+        vec![Artifact {
+            path: PathBuf::from("/tmp/\u{1b}[31mrun-01"),
+            kind: ArtifactKind::Capture,
+            modified: at(0),
+            detail: ArtifactDetail::Capture {
+                run_id: "\u{1b}]0;retitled\u{7}run-01".into(),
+                outcome: VerificationOutcome::Fail,
+                findings: vec![RunFinding {
+                    fingerprint: "abc123".into(),
+                    lens: "design".into(),
+                    severity: "major".into(),
+                    claim: "the dial\u{1b}[5m blinks\r\nand wraps".into(),
+                }],
+            },
+        }],
+        at(0),
+    ));
+
+    p.degradations.push(Degradation {
+        source: "artifacts".into(),
+        reason: "could not read \u{1b}[31m/tmp/x\u{1b}[0m: denied".into(),
+    });
+
+    p
+}
+
+/// **The guarantee, asserted where it actually matters.** Sanitising
+/// happens at three call sites, and three call sites is a habit rather
+/// than a property — so this checks the end of it instead: whatever path
+/// drew a cell, no cell holds anything a terminal would act on.
+///
+/// Every pane, because each reaches the buffer through different code,
+/// and a pane added later that forgets to elide fails here.
+#[test]
+fn no_pane_lets_captured_text_put_a_control_character_on_screen() {
+    let platform = PlatformState {
+        projects: vec![hostile_project()],
+    };
+    for tab in Tab::ALL {
+        let mut f = frame(&platform, tab, &[]);
+        f.question = Some("merge \u{1b}[31m#1\u{1b}[0m — type 1");
+        f.log = &[];
+        let buf = draw(&f, 120, 30);
+        for y in 0..buf.height {
+            for x in 0..buf.width {
+                let symbol = buf.get(x, y).symbol;
+                assert!(
+                    !symbol.is_control(),
+                    "{tab:?} put {symbol:?} at ({x},{y}) — observed data reached the terminal"
+                );
+            }
+        }
+    }
+}
+
+/// The other half, and the one that guards the *fix* rather than the
+/// bug: a stripper that took the words with the escapes would pass every
+/// assertion above and leave the pane empty. This fails only if the
+/// stripping is too eager, which is why it is here and why it would pass
+/// against the old unsanitised code too.
+#[test]
+fn the_words_the_escapes_were_hiding_are_still_on_screen() {
+    let platform = PlatformState {
+        projects: vec![hostile_project()],
+    };
+    let buf = draw(&frame(&platform, Tab::Verification, &[]), 120, 30);
+    let screen = text_of(&buf);
+    assert!(
+        screen.contains("no tests ran"),
+        "the detail was lost with its escapes:
+{screen}"
+    );
+}
+
+/// An escape is several `char`s and no display columns, so a line
+/// measured before stripping is truncated against a length that has
+/// nothing to do with what is visible — the row reads as full while
+/// showing almost nothing.
+#[test]
+fn a_line_is_truncated_against_what_is_visible_not_what_was_captured() {
+    let platform = PlatformState {
+        projects: vec![hostile_project()],
+    };
+    // Narrow on purpose. With its column padding this row is about 63
+    // visible columns and about 86 raw ones, so the width sits between
+    // them: measured correctly the whole line fits, and measured against
+    // its escape bytes it is elided and loses its last words.
+    let buf = draw(&frame(&platform, Tab::Verification, &[]), 90, 30);
+    let screen = text_of(&buf);
+    assert!(
+        screen.contains("in 0.01s"),
+        "the line was cut against its escape bytes:
+{screen}"
+    );
+}
