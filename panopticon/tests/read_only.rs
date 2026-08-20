@@ -1,17 +1,23 @@
-//! The read-only claim, checked rather than remembered.
+//! The read-only boundary, checked rather than remembered.
 //!
-//! This sub-project observes and mutates nothing: no labels set, no
-//! pull requests merged, no runs dispatched, nothing written to any
-//! repository. `parallax-baseline` ships a whole `actions` module that
-//! could do all of it, and the enforcement is simply that this crate
-//! never names it.
+//! Sub-project #5 gave the cockpit the ability to act, which makes this
+//! test more necessary rather than less. It used to say "no file in
+//! this crate names `actions`". Deleting it when control arrived would
+//! have quietly discarded the guarantee it encodes, so it moved
+//! instead: **only `control` may name an action**, and every module
+//! that observes or renders still may not.
 //!
-//! A grep is crude, and it is exactly proportionate. The claim is "this
-//! crate cannot mutate anything", the thing that would actually happen
-//! is somebody reaching for `actions::`, and a type-level guarantee
-//! would need a facade crate to say the same thing.
+//! That is the property worth keeping. A render path that can reach an
+//! action is a render path that can merge a pull request while drawing
+//! a frame, and the reason the rest of the screen is safe to leave
+//! running is that it structurally cannot.
+//!
+//! A grep is crude, and it is exactly proportionate. The claim is
+//! "observation cannot mutate anything", the thing that would actually
+//! happen is somebody reaching for `actions::` from inside `view/`, and
+//! a type-level guarantee would need a facade crate to say the same.
 
-use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf, MAIN_SEPARATOR};
 
 /// The shipped code of one file: comments stripped, and everything from
 /// the first `#[cfg(test)]` dropped.
@@ -59,28 +65,74 @@ fn sources() -> Vec<PathBuf> {
     out
 }
 
+/// The three files allowed to name an action, and why each one is.
+///
+/// `control` performs them. `app.rs` is the event loop, where a
+/// keypress becomes an intent - it names actions and performs none,
+/// which is the same split `control` itself keeps. `main.rs` is the
+/// composition root, and the one place that decides whether this run
+/// can act at all: it is where fixture mode is denied executors.
+///
+/// Everything else - every view module, the refresh thread, the bell,
+/// the fixtures - is observation, and stays structurally unable to act.
+const MAY_ACT: [&str; 3] = ["control", "app.rs", "main.rs"];
+
+fn may_act(path: &Path) -> bool {
+    let text = path.to_string_lossy().replace(MAIN_SEPARATOR, "/");
+    MAY_ACT
+        .iter()
+        .any(|allowed| text.contains(&format!("/{allowed}/")) || text.ends_with(allowed))
+}
+
 #[test]
-fn no_source_file_reaches_for_baselines_actions_module() {
+fn nothing_outside_control_reaches_for_baselines_actions_module() {
     let files = sources();
     assert!(files.len() > 5, "the walk found the crate: {files:?}");
 
+    let mut checked = 0;
     for path in files {
+        if may_act(&path) {
+            continue;
+        }
+        checked += 1;
         let text = shipped_code(&std::fs::read_to_string(&path).expect("readable"));
         for needle in ["parallax_baseline::actions", "actions::"] {
             assert!(
                 !text.contains(needle),
-                "{} names `{needle}` — this sub-project is read-only, and \
-                 control is sub-project #5",
+                "{} names `{needle}` - observation may not act. Only `control`                  and the event loop may, and a render path that can reach an                  action can merge a pull request while drawing a frame",
                 path.display()
             );
         }
     }
+    assert!(
+        checked > 5,
+        "the exemption swallowed the crate: only {checked} files were checked"
+    );
 }
 
-/// The other half of read-only: nothing writes to disk either. The
-/// cockpit holds no state across runs, so a `File::create` or a
-/// `write` would be a surprise worth arguing about in review rather
-/// than discovering later.
+/// The exemption is a list, not a hole. If `control` ever stops naming
+/// actions the list is stale and should shrink - and if a second module
+/// is ever added to it, this test is where that argument happens.
+#[test]
+fn the_module_allowed_to_act_actually_does() {
+    let control = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("control")
+        .join("mod.rs");
+    let text = std::fs::read_to_string(&control).expect("control/mod.rs exists");
+    assert!(
+        text.contains("parallax_baseline::actions"),
+        "the exemption list names a module that does not use it"
+    );
+}
+
+/// The other half: the cockpit itself still writes nothing to disk.
+///
+/// Control changes this less than it looks. A ruling is appended by
+/// `LocalExecutor`, in the library, through a path the manifest
+/// declares — the cockpit asks for it and does not do it. So a
+/// `File::create` in this crate is still a surprise worth arguing about
+/// in review rather than discovering later.
 #[test]
 fn no_source_file_writes_to_disk() {
     for path in sources() {

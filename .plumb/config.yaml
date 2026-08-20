@@ -25,3 +25,22 @@ scenarios:
       one before it: the selection has moved down one row.
     touches:
       - panopticon/src/**
+
+  - name: cockpit-confirm
+    adapter: pty
+    args: target/debug/panopticon.exe --fixtures panopticon/fixtures
+    size: 120x30
+    script: .plumb/scripts/cockpit-confirm.json
+    intent: >
+      The cockpit being asked to confirm an irreversible action. The
+      operator moves to a pull request row and presses `m`. The final
+      frame differs from every earlier one in exactly one way that
+      matters: the footer, which has been listing source ages, is now
+      titled CONFIRM and holds a question naming the pull request by
+      number and asking for that number to be typed. Nothing else moves,
+      no window opens over the screen, and the work list stays fully
+      readable behind the question -- an operator being asked something
+      must still be able to see what they are being asked about.
+    touches:
+      - panopticon/src/control/**
+      - panopticon/src/view/render.rs
