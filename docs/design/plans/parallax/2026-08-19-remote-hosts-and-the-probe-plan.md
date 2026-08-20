@@ -395,9 +395,34 @@ to `$GITHUB_TOKEN` then `$GH_TOKEN`, mirroring panopticon, and the unit
 reads them from an `EnvironmentFile` so the token stays out of a file
 that gets committed.
 
-**Not yet verified:** the three-machine run. Tailscale is up on the
-desktop and the laptop; the Pi is awaiting a reboot. Two probes on two
-ports on this machine answer correctly, including an empty one.
+**Verified on the real machines, 2026-08-20.** A probe on `tatepi`
+published with `tailscale serve --https=443`, reached from the desktop
+over a direct connection at 16ms. It serves `parallax` and `sesh`, and
+`sesh` carries **17 agent sessions** — which is the thing this whole arc
+was for: a cockpit on one machine listing the work in flight on another.
+
+Two deployment notes were wrong before that worked, and both are fixed
+above: the unit's `--projects-root` assumed the desktop's `Dev/` layout,
+and the install sequence assumed this repository was already on the Pi.
+
+**Milestone 5, both halves.** The cockpit rendered six rows across three
+machines with the Pi's sources aged in seconds where local ones read
+`live`. Stopping the probe produced two *different* failures at once,
+each naming itself and neither costing the others a row:
+
+- `peer:tatepi http 502:` — the machine is up and `tailscale serve` is
+  still proxying, so the peer answers with an error rather than being
+  unreachable. Worth knowing that this is the common case.
+- `peer:tates-laptop timed out … connection timed out` — a machine on
+  the tailnet with no probe. It *timed out* rather than hanging, which
+  is the transport timeout added earlier doing visible work.
+
+That run was a cold start, though, and a cold start is the easier half:
+with nothing remembered there is nothing to lose.
+`baseline/tests/peer_transition.rs` holds the other half on a socket —
+a peer that answers once and then disappears keeps the rows it served,
+reports every one of them `Unavailable`, and leaves nothing behind that
+can still claim to be fresh.
 
 #### Task 16: The roadmap converts to named components
 
