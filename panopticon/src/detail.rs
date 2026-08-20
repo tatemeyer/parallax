@@ -3,7 +3,7 @@
 //! so it tests headlessly, exactly like `overview` -- `run` (via `App`)
 //! is the only code in this crate that touches a terminal.
 
-use crate::fmt::{family_degraded, format_duration, DASH};
+use crate::fmt::{family_degraded, format_duration, sanitize, DASH};
 use parallax_baseline::autonomy::{Implement, Merge, Readiness};
 use parallax_baseline::freshness::Freshness;
 use parallax_baseline::state::{ProjectState, SourceStatus};
@@ -38,7 +38,7 @@ fn freshness_text(freshness: &Freshness) -> String {
                 format_duration(*overdue)
             )
         }
-        Freshness::Unavailable { reason, .. } => format!("Unavailable: {reason}"),
+        Freshness::Unavailable { reason, .. } => format!("Unavailable: {}", sanitize(reason)),
     }
 }
 
@@ -115,7 +115,8 @@ fn work_lines(state: &ProjectState) -> Vec<String> {
                 };
                 lines.push(format!(
                     "  #{} {}  implement={implement} merge={merge} readiness={readiness}",
-                    item.number, item.title
+                    item.number,
+                    sanitize(&item.title)
                 ));
             }
         }
@@ -131,7 +132,7 @@ fn verification_lines(state: &ProjectState) -> Vec<String> {
     } else {
         for v in &state.verification {
             let detail = match &v.value.detail {
-                Some(d) if !d.is_empty() => format!(" -- {d}"),
+                Some(d) if !d.is_empty() => format!(" -- {}", sanitize(d)),
                 _ => String::new(),
             };
             lines.push(format!("  {}: {:?}{detail}", v.value.kind, v.value.outcome));
@@ -154,7 +155,7 @@ fn artifacts_lines(state: &ProjectState) -> Vec<String> {
         match most_recent {
             Some(a) => lines.push(format!(
                 "  {total} total, most recent: {}",
-                a.path.display()
+                sanitize(&a.path.display().to_string())
             )),
             None => lines.push(format!("  {total} total")),
         }
@@ -170,7 +171,10 @@ fn sessions_lines(state: &ProjectState) -> Vec<String> {
             let total = observed.value.len();
             let most_recent = observed.value.iter().max_by_key(|s| s.last_activity);
             match most_recent {
-                Some(s) => lines.push(format!("  {total} total, most recent: {}", s.name)),
+                Some(s) => lines.push(format!(
+                    "  {total} total, most recent: {}",
+                    sanitize(&s.name)
+                )),
                 None => lines.push(format!("  {total} total")),
             }
         }
@@ -183,9 +187,10 @@ fn unmapped_lines(state: &ProjectState) -> Vec<String> {
     if state.unmapped_labels.is_empty() {
         return Vec::new();
     }
+    let labels: Vec<String> = state.unmapped_labels.iter().map(|l| sanitize(l)).collect();
     vec![
         "UNMAPPED LABELS".to_string(),
-        format!("  {}", state.unmapped_labels.join(", ")),
+        format!("  {}", labels.join(", ")),
     ]
 }
 
@@ -306,6 +311,16 @@ mod tests {
     }
 
     #[test]
+    fn an_unavailable_reason_carrying_ansi_escapes_renders_without_them() {
+        let text = freshness_text(&Freshness::Unavailable {
+            reason: "\x1b[31mrate limited\x1b[0m".into(),
+            since: None,
+        });
+        assert!(!text.contains('\x1b'), "{text}");
+        assert!(text.contains("rate limited"), "{text}");
+    }
+
+    #[test]
     fn sources_are_ordered_worst_first() {
         let mut p = degraded(project("x"), "work:github");
         p.verification = vec![Observed::watched(
@@ -335,6 +350,21 @@ mod tests {
         let p = degraded(project("x"), "work:github");
         let lines = work_lines(&p);
         assert_eq!(lines[1].trim(), "Unavailable");
+    }
+
+    #[test]
+    fn a_work_item_title_carrying_ansi_escapes_renders_without_them() {
+        let mut p = project("x");
+        p.work = Some(Observed::polled(
+            WorkSnapshot {
+                items: vec![item(1, "\x1b[31murgent\x1b[0m fix")],
+            },
+            at(0),
+            Duration::from_secs(30),
+        ));
+        let lines = work_lines(&p);
+        assert!(!lines[1].contains('\x1b'), "{}", lines[1]);
+        assert!(lines[1].contains("urgent fix"), "{}", lines[1]);
     }
 
     #[test]
@@ -428,6 +458,27 @@ mod tests {
     }
 
     #[test]
+    fn verification_detail_strips_ansi_escapes_and_keeps_the_message() {
+        // The actual repro: pytest's own coloured "no tests ran" summary,
+        // captured verbatim and handed to us as `detail`.
+        let mut p = project("x");
+        p.verification = vec![Observed::watched(
+            VerificationStatus {
+                kind: "tests".into(),
+                outcome: VerificationOutcome::Fail,
+                detail: Some("\x1b[33m====== no tests ran \x1b[0min 0.01s\x1b[0m ======".into()),
+            },
+            at(0),
+        )];
+        let lines = verification_lines(&p);
+        assert!(!lines[1].contains('\x1b'), "{}", lines[1]);
+        assert!(!lines[1].contains("[33m"), "{}", lines[1]);
+        assert!(!lines[1].contains("[0m"), "{}", lines[1]);
+        assert!(lines[1].contains("no tests ran"), "{}", lines[1]);
+        assert!(lines[1].contains("in 0.01s"), "{}", lines[1]);
+    }
+
+    #[test]
     fn verification_lists_each_checks_outcome() {
         let mut p = project("x");
         p.verification = vec![Observed::watched(
@@ -474,6 +525,21 @@ mod tests {
     }
 
     #[test]
+    fn an_artifact_path_carrying_ansi_escapes_renders_without_them() {
+        let mut p = project("x");
+        let a = Artifact {
+            path: "\x1b[31mnew\x1b[0m.png".into(),
+            kind: ArtifactKind::Figure,
+            modified: at(0),
+            detail: ArtifactDetail::Figure { bytes: 1 },
+        };
+        p.artifacts = vec![Observed::watched(vec![a], at(0))];
+        let lines = artifacts_lines(&p);
+        assert!(!lines[1].contains('\x1b'), "{}", lines[1]);
+        assert!(lines[1].contains("new.png"), "{}", lines[1]);
+    }
+
+    #[test]
     fn sessions_not_declared_says_so() {
         let lines = sessions_lines(&project("x"));
         assert!(lines[1].contains("not declared"));
@@ -493,6 +559,22 @@ mod tests {
         let lines = sessions_lines(&p);
         assert!(lines[1].contains('1'));
         assert!(lines[1].contains("s1"));
+    }
+
+    #[test]
+    fn a_session_name_carrying_ansi_escapes_renders_without_them() {
+        let mut p = project("x");
+        p.sessions = Some(Observed::watched(
+            vec![Session {
+                name: "\x1b[35mweird\x1b[0m-session".into(),
+                path: "s1".into(),
+                last_activity: at(0),
+            }],
+            at(0),
+        ));
+        let lines = sessions_lines(&p);
+        assert!(!lines[1].contains('\x1b'), "{}", lines[1]);
+        assert!(lines[1].contains("weird-session"), "{}", lines[1]);
     }
 
     // --- Unmapped labels: present only when there are any ---
