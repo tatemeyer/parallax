@@ -125,6 +125,22 @@ fn main() -> ExitCode {
         eprintln!("parallax-probe: {failure}");
     }
 
+    // The deployment notes suggest every machine can run the same
+    // registry file, which makes this reachable rather than theoretical:
+    // that file names peers, and a probe does not follow them.
+    //
+    // It deliberately does not chain. A probe answers for the disk it is
+    // standing on; one that fetched its own peers would be a proxy,
+    // would let two probes point at each other, and would report state
+    // it has no way to verify. The cockpit is what fans out.
+    if !registry.peers().is_empty() {
+        eprintln!(
+            "parallax-probe: ignoring {} peer(s) in the registry — a probe serves \
+             only the machine it runs on. The cockpit is what fetches peers.",
+            registry.peers().len()
+        );
+    }
+
     // Credential discovery is a frontend's job: `parallax-baseline` takes
     // a token and never reads the environment, so it runs identically in
     // a test. Somebody still has to look — without it every private
