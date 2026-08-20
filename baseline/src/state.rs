@@ -138,6 +138,12 @@ impl ProjectState {
     /// business; this is the identity underneath.
     pub fn qualified_name(&self) -> String {
         match &self.peer {
+            // The stand-in row for a machine that has not answered is
+            // named for the machine itself, and `tates-laptop@tates-laptop`
+            // says the same thing twice while looking like a project that
+            // happens to share its host's name. The row means "this
+            // machine, and nothing known about it yet".
+            Some(peer) if *peer == self.name => self.name.clone(),
             Some(peer) => format!("{}@{peer}", self.name),
             None => self.name.clone(),
         }
@@ -737,6 +743,21 @@ mod peer_identity_tests {
         assert_eq!(
             platform.qualified("sesh@pi5").unwrap().peer.as_deref(),
             Some("pi5")
+        );
+    }
+
+    /// The stand-in row for a machine that has never answered. Seen for
+    /// real on a laptop with Tailscale but no probe, where it read
+    /// `tates-laptop@tates-laptop`.
+    #[test]
+    fn a_row_standing_in_for_a_whole_machine_is_named_once() {
+        let mut platform = PlatformState::default();
+        platform.extend_from_peer("tates-laptop", vec![project("tates-laptop")]);
+        assert_eq!(platform.projects[0].qualified_name(), "tates-laptop");
+        assert_eq!(
+            platform.projects[0].peer.as_deref(),
+            Some("tates-laptop"),
+            "it is still a remote row, and everything that acts on one must still refuse it"
         );
     }
 
