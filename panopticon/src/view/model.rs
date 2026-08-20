@@ -25,7 +25,13 @@ pub enum Health {
 /// One row of the project rail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RailRow {
-    /// The project's short name.
+    /// What to call this project on screen: its short name when it is on
+    /// this machine, and `name@peer` when it is not.
+    ///
+    /// Qualified rather than bare because this desktop holds a clone of
+    /// `sesh` and the Pi serves one too. Two rows both reading `sesh`
+    /// would be worse than not showing the Pi at all — the operator
+    /// could act on the wrong one and never know.
     pub name: String,
     /// Its primary language, for display.
     pub language: Option<String>,
@@ -112,7 +118,7 @@ pub fn rail_rows(state: &PlatformState, now: SystemTime) -> Vec<RailRow> {
         .projects
         .iter()
         .map(|p| RailRow {
-            name: p.name.clone(),
+            name: p.qualified_name(),
             language: p.language.clone(),
             health: health(p, now),
         })
@@ -208,5 +214,34 @@ mod tests {
             .map(|r| r.name)
             .collect();
         assert_eq!(names, vec!["zebra", "aardvark"], "not sorted");
+    }
+
+    /// The desktop holds a clone of `sesh` and the Pi serves one too, so
+    /// this is the ordinary case. Two rows both reading `sesh` would be
+    /// worse than not showing the Pi at all: the operator could press a
+    /// key at the wrong machine's project and never find out.
+    #[test]
+    fn a_peers_project_is_named_for_its_machine_and_a_local_one_is_not() {
+        let mut state = PlatformState::default();
+        state.projects.push(bare_project("sesh"));
+        state.extend_from_peer("pi5", vec![bare_project("sesh")]);
+
+        let names: Vec<String> = rail_rows(&state, at(0))
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(names, vec!["sesh", "sesh@pi5"]);
+    }
+
+    /// The model is width-agnostic on purpose — it says what a project
+    /// is called and the renderer decides what fits. That matters here:
+    /// `ttui@tates-laptop` is 17 columns and the rail is 18 wide, so the
+    /// renderer has to elide it rather than clip it silently.
+    #[test]
+    fn a_qualified_name_is_returned_whole_and_left_for_the_renderer_to_fit() {
+        let mut state = PlatformState::default();
+        state.extend_from_peer("tates-laptop", vec![bare_project("ttui")]);
+        let row = &rail_rows(&state, at(0))[0];
+        assert_eq!(row.name, "ttui@tates-laptop");
     }
 }
