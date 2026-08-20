@@ -12,7 +12,7 @@ use crate::refresh::{Clock, Refresher, Request, Update};
 use crate::view::model::Declared;
 use crate::view::render::{render, Frame, Tab};
 use crossterm::event::{Event, KeyCode, KeyEventKind};
-use parallax_baseline::actions::Action as BaseAction;
+use parallax_baseline::actions::{Action as BaseAction, Ruling};
 use parallax_baseline::state::{PlatformState, ProjectState};
 use parallax_baseline::validate::Validated;
 use std::collections::BTreeMap;
@@ -100,6 +100,22 @@ impl Panopticon {
         self
     }
 
+    /// Puts an artifact feed on the selected project, for tests that
+    /// need something on screen to point a key at. Not used outside
+    /// them: in a real run the refresh thread supplies this.
+    #[doc(hidden)]
+    pub fn seed_artifacts(
+        &mut self,
+        artifacts: Vec<parallax_baseline::adapters::artifact::Artifact>,
+    ) {
+        if let Some(project) = self.platform.projects.get_mut(self.selected) {
+            project.artifacts = vec![parallax_baseline::freshness::Observed::watched(
+                artifacts,
+                self.clock.now(),
+            )];
+        }
+    }
+
     /// What this session has attempted, for the log pane.
     fn log_lines(&self) -> Vec<(String, String, bool)> {
         self.control
@@ -107,6 +123,24 @@ impl Panopticon {
             .iter()
             .map(|e| (e.summary.clone(), e.result.clone(), e.ok))
             .collect()
+    }
+
+    /// The finding under the cursor, when the artifacts pane is
+    /// showing one. `None` on a run row: a ruling addresses a finding,
+    /// and "rule on this whole run" is not a thing Plumb has.
+    fn selected_finding(&self) -> Option<String> {
+        if self.tab != Tab::Artifacts {
+            return None;
+        }
+        let project = self.platform.projects.get(self.selected)?;
+        match crate::view::artifacts::artifact_rows(project)
+            .into_iter()
+            .nth(self.detail_selected)?
+            .of
+        {
+            crate::view::artifacts::RowOf::Finding { fingerprint } => Some(fingerprint),
+            crate::view::artifacts::RowOf::Artifact => None,
+        }
     }
 
     /// The work row under the cursor, when the work pane is showing one.
@@ -305,6 +339,31 @@ impl Panopticon {
                             branch: String::new(),
                         },
                         "push which branch".to_string(),
+                    );
+                }
+            }
+            // Ruling is the one input Plumb's learned-rejection store
+            // depends on. Both rulings are classified reversible by the
+            // platform spec and so neither asks: a ruling is an appended
+            // record, and an opposite one later supersedes it. That is
+            // worth knowing before pressing `o` -- overruling does take
+            // effect immediately, on every later run of that scenario.
+            Action::Uphold | Action::Overrule => {
+                if let (Some(project), Some(fingerprint)) =
+                    (self.selected_name(), self.selected_finding())
+                {
+                    let ruling = if action == Action::Uphold {
+                        Ruling::Upheld
+                    } else {
+                        Ruling::Overruled
+                    };
+                    self.control.offer(
+                        self.selected,
+                        BaseAction::RuleFinding {
+                            project,
+                            fingerprint,
+                            ruling,
+                        },
                     );
                 }
             }

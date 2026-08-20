@@ -250,3 +250,81 @@ fn the_key_that_opens_a_prompt_does_not_type_itself_into_it() {
         "the prompt swallowed a key release as typed input"
     );
 }
+
+/// The action the master design calls the highest-leverage one in the
+/// platform: the single input Plumb's learned-rejection store depends
+/// on. It had no home until the artifacts pane listed findings, which
+/// is why this test goes all the way from a run directory on disk to
+/// the fingerprint that reaches the executor.
+#[test]
+fn overruling_addresses_the_finding_under_the_cursor() {
+    let mut h = harness();
+
+    // A run with two findings, as the capture adapter would report it.
+    let run = parallax_baseline::adapters::artifact::Artifact {
+        path: std::path::PathBuf::from("/tmp/20260820T020000Z"),
+        kind: parallax_baseline::manifest::ArtifactKind::Capture,
+        modified: at(0),
+        detail: parallax_baseline::adapters::artifact::ArtifactDetail::Capture {
+            run_id: "20260820T020000Z".into(),
+            outcome: parallax_baseline::adapters::verification::VerificationOutcome::Pass,
+            findings: vec![
+                parallax_baseline::adapters::artifact::RunFinding {
+                    fingerprint: "c4ecaed985e54a76".into(),
+                    lens: "intent".into(),
+                    severity: "major".into(),
+                    claim: "only two em-dash columns appear".into(),
+                },
+                parallax_baseline::adapters::artifact::RunFinding {
+                    fingerprint: "0000deadbeef0000".into(),
+                    lens: "motion".into(),
+                    severity: "minor".into(),
+                    claim: "the last two frames are identical".into(),
+                },
+            ],
+        },
+    };
+    h.app.seed_artifacts(vec![run]);
+
+    press(&mut h.app, KeyCode::Char('3'), KeyModifiers::NONE); // artifacts
+    ch(&mut h.app, 'j'); // past the run row, onto the first finding
+    ch(&mut h.app, 'j'); // onto the second
+    ch(&mut h.app, 'o'); // overrule it
+
+    let performed = h.performed.lock().unwrap();
+    assert_eq!(performed.len(), 1, "nothing was ruled on");
+    assert!(
+        performed[0].contains("0000deadbeef0000"),
+        "ruled on a finding other than the one under the cursor: {}",
+        performed[0]
+    );
+    assert!(performed[0].contains("Overruled"), "{}", performed[0]);
+}
+
+/// A run row is not a finding. "Rule on this whole run" is not a thing
+/// Plumb has, and offering it would write a ruling nothing suppresses.
+#[test]
+fn ruling_with_the_cursor_on_a_run_row_does_nothing() {
+    let mut h = harness();
+    h.app
+        .seed_artifacts(vec![parallax_baseline::adapters::artifact::Artifact {
+            path: std::path::PathBuf::from("/tmp/20260820T020000Z"),
+            kind: parallax_baseline::manifest::ArtifactKind::Capture,
+            modified: at(0),
+            detail: parallax_baseline::adapters::artifact::ArtifactDetail::Capture {
+                run_id: "20260820T020000Z".into(),
+                outcome: parallax_baseline::adapters::verification::VerificationOutcome::Pass,
+                findings: vec![parallax_baseline::adapters::artifact::RunFinding {
+                    fingerprint: "abc".into(),
+                    lens: "intent".into(),
+                    severity: "major".into(),
+                    claim: "x".into(),
+                }],
+            },
+        }]);
+
+    press(&mut h.app, KeyCode::Char('3'), KeyModifiers::NONE);
+    ch(&mut h.app, 'u'); // the cursor is on the run itself
+
+    assert_eq!(h.calls.load(Ordering::SeqCst), 0);
+}

@@ -38,7 +38,73 @@ pub enum ArtifactDetail {
         run_id: String,
         /// The run's verdict, or `NotRun` when it wrote none.
         outcome: VerificationOutcome,
+        /// The findings that survived merge, in the order the run
+        /// ranked them. Empty for a run that found nothing, and for one
+        /// that has not merged yet — which is the same on screen as
+        /// "no findings" and is why the verdict is shown beside them.
+        findings: Vec<RunFinding>,
     },
+}
+
+/// One finding from a Plumb run, as much of it as a cockpit row needs.
+///
+/// The fingerprint is the part that matters: it is what a ruling
+/// addresses, and what Plumb suppresses a repeat of on the next run.
+/// The evidence paragraph is deliberately not carried — it is written
+/// for a reader with the image in front of them, and the cockpit is
+/// not that reader.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunFinding {
+    /// Plumb's stable identity for this finding.
+    pub fingerprint: String,
+    /// Which lens raised it.
+    pub lens: String,
+    /// How bad it says it is.
+    pub severity: String,
+    /// The one-line claim.
+    pub claim: String,
+}
+
+/// Reads `merge/survivors.json` from a run directory.
+///
+/// A missing or unreadable file is no findings rather than an error: a
+/// run still capturing has not written one yet, and a run directory
+/// that cannot be parsed should not take the whole artifacts pane down
+/// with it.
+fn read_findings(run: &Path) -> Vec<RunFinding> {
+    let Ok(text) = std::fs::read_to_string(run.join("merge").join("survivors.json")) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    value
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    let finding = entry.get("finding")?;
+                    Some(RunFinding {
+                        fingerprint: entry.get("fingerprint")?.as_str()?.to_string(),
+                        lens: string_at(finding, "lens"),
+                        severity: string_at(finding, "severity"),
+                        claim: string_at(finding, "claim"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// One string field, or `?` — a finding with a fingerprint and a
+/// missing lens is still a finding worth ruling on.
+fn string_at(value: &serde_json::Value, field: &str) -> String {
+    value
+        .get(field)
+        .and_then(|v| v.as_str())
+        .unwrap_or("?")
+        .to_string()
 }
 
 /// One artifact a run produced.
@@ -216,11 +282,16 @@ impl ArtifactAdapter for CaptureArtifactAdapter {
                 .ok()
                 .and_then(|text| parse_verdict(&text))
                 .unwrap_or(VerificationOutcome::NotRun);
+            let findings = read_findings(&path);
             artifacts.push(Artifact {
                 modified: modified_at(&path),
                 path,
                 kind: ArtifactKind::Capture,
-                detail: ArtifactDetail::Capture { run_id, outcome },
+                detail: ArtifactDetail::Capture {
+                    run_id,
+                    outcome,
+                    findings,
+                },
             });
         }
         Ok(Observed::watched(artifacts, now))
@@ -404,6 +475,7 @@ mod scan_tests {
             ArtifactDetail::Capture {
                 run_id: "20260814T101500Z".into(),
                 outcome: crate::adapters::verification::VerificationOutcome::Pass,
+                findings: Vec::new(),
             }
         );
         assert_eq!(
@@ -411,6 +483,7 @@ mod scan_tests {
             ArtifactDetail::Capture {
                 run_id: "20260814T112200Z".into(),
                 outcome: crate::adapters::verification::VerificationOutcome::Fail,
+                findings: Vec::new(),
             }
         );
     }
@@ -445,6 +518,7 @@ mod scan_tests {
             ArtifactDetail::Capture {
                 run_id: "20260814T112200Z".into(),
                 outcome: crate::adapters::verification::VerificationOutcome::Fail,
+                findings: Vec::new(),
             }
         );
     }

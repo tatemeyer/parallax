@@ -85,10 +85,22 @@ fn ttui_tree() -> tempfile::TempDir {
 ",
     )
     .unwrap();
+    // A real survivors file, shaped exactly as `plumb merge` writes
+    // one: the finding nested under `finding`, the fingerprint beside
+    // it. Two entries, so a test can tell first from second.
     std::fs::write(
         run.join("merge/survivors.json"),
-        "[]
-",
+        r#"[
+  {"finding": {"lens": "intent", "scenario": "s", "severity": "major",
+               "region": "the work table", "claim": "only two em-dash columns appear",
+               "evidence": "long prose a cockpit row has no room for", "confidence": "high"},
+   "also_raised_by": [], "fingerprint": "c4ecaed985e54a76"},
+  {"finding": {"lens": "motion", "scenario": "s", "severity": "minor",
+               "region": "frames 3 and 4", "claim": "the last two frames are identical",
+               "evidence": "zero differing pixels", "confidence": "medium"},
+   "also_raised_by": [], "fingerprint": "0000deadbeef0000"}
+]
+"#,
     )
     .unwrap();
     std::fs::copy(fixture("plumb/verdict-no-go.md"), run.join("verdict.md")).unwrap();
@@ -243,13 +255,47 @@ fn ttui_capture_artifacts_carry_the_run_s_verdict() {
 
     let artifacts = &state.artifacts[0].value;
     assert_eq!(artifacts.len(), 1);
-    assert_eq!(
-        artifacts[0].detail,
-        ArtifactDetail::Capture {
-            run_id: "20260814T112200Z".into(),
-            outcome: VerificationOutcome::Fail,
-        }
-    );
+    let ArtifactDetail::Capture {
+        run_id,
+        outcome,
+        findings,
+    } = &artifacts[0].detail
+    else {
+        panic!("a run directory reported as something other than a run");
+    };
+    assert_eq!(run_id, "20260814T112200Z");
+    assert_eq!(*outcome, VerificationOutcome::Fail);
+
+    // The findings come off disk, in the order the run ranked them. A
+    // ruling addresses a fingerprint, so the fingerprint is the field
+    // that has to survive the trip intact.
+    assert_eq!(findings.len(), 2, "the survivors file was not read");
+    assert_eq!(findings[0].fingerprint, "c4ecaed985e54a76");
+    assert_eq!(findings[0].lens, "intent");
+    assert_eq!(findings[0].severity, "major");
+    assert_eq!(findings[0].claim, "only two em-dash columns appear");
+    assert_eq!(findings[1].fingerprint, "0000deadbeef0000");
+}
+
+/// A run still capturing has written no survivors file, and a run
+/// directory that cannot be parsed should not take the artifacts pane
+/// down with it. Both read as no findings, which is the same thing the
+/// operator sees for a run that genuinely found none — which is why the
+/// verdict is shown beside them.
+#[test]
+fn a_run_with_no_readable_survivors_file_reports_no_findings() {
+    let tree = ttui_tree();
+    let run = tree.path().join(".plumb/runs/20260814T112200Z");
+    std::fs::write(run.join("merge/survivors.json"), "{ not json at all").unwrap();
+
+    let validated = load_rooted("tiers.yaml", tree.path());
+    let mut adapters = ttui_adapters(&validated);
+    let state = aggregate_project(&validated, &mut adapters, at(0));
+
+    let ArtifactDetail::Capture { findings, .. } = &state.artifacts[0].value[0].detail else {
+        panic!("not a run");
+    };
+    assert!(findings.is_empty());
 }
 
 #[test]

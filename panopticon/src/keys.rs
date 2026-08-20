@@ -40,6 +40,12 @@ pub enum Action {
     Capture,
     /// Push a branch. Confirmation required.
     Push,
+    /// Uphold the selected finding.
+    Uphold,
+    /// Overrule the selected finding, suppressing it on later runs.
+    /// Takes effect immediately: the platform spec classifies a ruling
+    /// as reversible, because a later opposite ruling supersedes it.
+    Overrule,
     /// Show what this session has done.
     ActionLog,
     /// Toggle the help overlay.
@@ -93,6 +99,8 @@ pub fn binder() -> InputBinder<Action> {
         },
         Action::RequestReview,
     );
+    b.bind(KeyPress::plain(KeyCode::Char('u')), Action::Uphold);
+    b.bind(KeyPress::plain(KeyCode::Char('o')), Action::Overrule);
     b.bind(KeyPress::plain(KeyCode::Char('5')), Action::ActionLog);
     b.bind(KeyPress::plain(KeyCode::Char('?')), Action::Help);
     b.bind(KeyPress::plain(KeyCode::Char('q')), Action::Quit);

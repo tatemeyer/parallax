@@ -44,3 +44,20 @@ scenarios:
     touches:
       - panopticon/src/control/**
       - panopticon/src/view/render.rs
+
+  - name: cockpit-findings
+    adapter: pty
+    args: target/debug/panopticon.exe --fixtures panopticon/fixtures
+    size: 120x30
+    script: .plumb/scripts/cockpit-findings.json
+    intent: >
+      The artifacts pane showing a Plumb run and, indented beneath it,
+      every finding that run produced -- one row each, carrying the
+      severity, the lens that raised it, and the one-line claim. The
+      operator moves onto the first finding, which is what `u` and `o`
+      rule on. A run row and a finding row are visibly different things:
+      the run names itself and its verdict word, a finding is indented
+      and names no file. Long claims end in `...` rather than at the
+      border.
+    touches:
+      - panopticon/src/view/artifacts.rs
