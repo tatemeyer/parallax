@@ -11,6 +11,7 @@
 pub mod app;
 pub mod bell;
 pub mod control;
+pub mod courier;
 pub mod fixtures;
 pub mod keys;
 pub mod refresh;

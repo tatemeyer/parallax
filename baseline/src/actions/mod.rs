@@ -28,7 +28,7 @@ pub use executor::{
 };
 pub use github::GithubWorkControl;
 pub use process::LocalProcessControl;
-pub use remote::{RemoteExecutor, Standing, Submitted, ACTION_PATH};
+pub use remote::{RemoteExecutor, Standing, Submitted, Submitter, ACTION_PATH};
 
 use serde::{Deserialize, Serialize};
 

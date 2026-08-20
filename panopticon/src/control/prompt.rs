@@ -48,12 +48,26 @@ pub enum Answer {
     Confirmed(Action),
 }
 
+/// Names the machine an action will run on, when it is not this one.
+///
+/// **"merge pull request #12" and "merge pull request #12 on pi5" are
+/// different decisions**, and the operator is the only one who can tell
+/// whether the first was meant — the two rows sit one keystroke apart on
+/// the same rail. A local action gains nothing here, because "on this
+/// machine" is what every prompt has always meant.
+fn target(action: &Action, on: Option<&str>) -> String {
+    match on {
+        Some(peer) => format!("{} ON {peer}", action.summary()),
+        None => action.summary(),
+    }
+}
+
 impl Prompt {
     /// A yes/no question.
-    pub fn confirm(action: Action) -> Self {
+    pub fn confirm(action: Action, on: Option<&str>) -> Self {
         let question = format!(
             "{} — press y to confirm, any other key cancels",
-            action.summary()
+            target(&action, on)
         );
         Self {
             action,
@@ -63,11 +77,11 @@ impl Prompt {
     }
 
     /// A question answered by typing `expect` exactly.
-    pub fn confirm_by_typing(action: Action, expect: impl Into<String>) -> Self {
+    pub fn confirm_by_typing(action: Action, expect: impl Into<String>, on: Option<&str>) -> Self {
         let expect = expect.into();
         let question = format!(
             "{} — type {expect} and press Enter, Esc cancels",
-            action.summary()
+            target(&action, on)
         );
         Self {
             action,
@@ -82,10 +96,19 @@ impl Prompt {
     /// A question answered by typing anything, which then completes the
     /// action. Used where the action is not fully known until the
     /// operator says so — which label to apply, which branch to push.
-    pub fn ask_for(action: Action, question: impl Into<String>) -> Self {
+    ///
+    /// Names the machine for the same reason a confirmation does. This
+    /// one matters more, not less: the operator is about to type a
+    /// branch name, and "push which branch" on its own reads as a
+    /// question about the repository in front of them.
+    pub fn ask_for(action: Action, question: impl Into<String>, on: Option<&str>) -> Self {
+        let question = match on {
+            Some(peer) => format!("{} ON {peer}", question.into()),
+            None => question.into(),
+        };
         Self {
             action,
-            question: question.into(),
+            question,
             ask: Ask::Type {
                 typed: String::new(),
                 expect: None,
@@ -172,12 +195,12 @@ mod tests {
     #[test]
     fn y_confirms_and_anything_else_does_not() {
         assert_eq!(
-            Prompt::confirm(merge()).key(Some('y')),
+            Prompt::confirm(merge(), None).key(Some('y')),
             Answer::Confirmed(merge())
         );
         for key in ['n', 'Y', ' ', 'q'] {
             assert_eq!(
-                Prompt::confirm(merge()).key(Some(key)),
+                Prompt::confirm(merge(), None).key(Some(key)),
                 Answer::Cancelled,
                 "`{key}` answered a question it was not asked"
             );
@@ -186,7 +209,7 @@ mod tests {
 
     #[test]
     fn a_typed_confirmation_needs_the_exact_string() {
-        let mut p = Prompt::confirm_by_typing(merge(), "36");
+        let mut p = Prompt::confirm_by_typing(merge(), "36", None);
         assert_eq!(p.key(Some('3')), Answer::Waiting);
         assert_eq!(p.key(Some('6')), Answer::Waiting);
         assert_eq!(p.key(None), Answer::Confirmed(merge()));
@@ -196,7 +219,7 @@ mod tests {
     /// while looking at one row and answered for another.
     #[test]
     fn a_typed_confirmation_with_the_wrong_number_cancels() {
-        let mut p = Prompt::confirm_by_typing(merge(), "36");
+        let mut p = Prompt::confirm_by_typing(merge(), "36", None);
         for c in "35".chars() {
             p.key(Some(c));
         }
@@ -205,7 +228,7 @@ mod tests {
 
     #[test]
     fn backspace_takes_back_a_character() {
-        let mut p = Prompt::confirm_by_typing(merge(), "36");
+        let mut p = Prompt::confirm_by_typing(merge(), "36", None);
         for c in ['3', '9'] {
             p.key(Some(c));
         }
@@ -216,7 +239,7 @@ mod tests {
 
     #[test]
     fn typing_a_label_completes_the_action_with_it() {
-        let mut p = Prompt::ask_for(label(), "label #170");
+        let mut p = Prompt::ask_for(label(), "label #170", None);
         for c in "semver:minor".chars() {
             p.key(Some(c));
         }
@@ -234,13 +257,13 @@ mod tests {
     /// because Enter was pressed twice is not what anybody meant.
     #[test]
     fn an_empty_answer_cancels() {
-        let mut p = Prompt::ask_for(label(), "label #170");
+        let mut p = Prompt::ask_for(label(), "label #170", None);
         assert_eq!(p.key(None), Answer::Cancelled);
     }
 
     #[test]
     fn the_line_shows_what_is_being_asked_and_what_has_been_typed() {
-        let mut p = Prompt::confirm_by_typing(merge(), "36");
+        let mut p = Prompt::confirm_by_typing(merge(), "36", None);
         p.key(Some('3'));
         let line = p.line();
         assert!(line.contains("merge"), "{line}");

@@ -65,7 +65,7 @@ fn sources() -> Vec<PathBuf> {
     out
 }
 
-/// The three files allowed to name an action, and why each one is.
+/// The four files allowed to name an action, and why each one is.
 ///
 /// `control` performs them. `app.rs` is the event loop, where a
 /// keypress becomes an intent - it names actions and performs none,
@@ -73,9 +73,18 @@ fn sources() -> Vec<PathBuf> {
 /// composition root, and the one place that decides whether this run
 /// can act at all: it is where fixture mode is denied executors.
 ///
+/// `courier.rs` carries an action to another machine, and was added
+/// when control crossed the wire. The argument for it is the argument
+/// against putting it in the refresh thread: a submission is a network
+/// call that can block, the refresh thread is the other one, and
+/// merging them would have meant either freezing the UI or letting
+/// observation name an action. It decides nothing - the prompt is
+/// `control`'s and the authorization is the far machine's - and it is
+/// the reason `refresh.rs` is still on the other side of this line.
+///
 /// Everything else - every view module, the refresh thread, the bell,
 /// the fixtures - is observation, and stays structurally unable to act.
-const MAY_ACT: [&str; 3] = ["control", "app.rs", "main.rs"];
+const MAY_ACT: [&str; 4] = ["control", "app.rs", "main.rs", "courier.rs"];
 
 fn may_act(path: &Path) -> bool {
     let text = path.to_string_lossy().replace(MAIN_SEPARATOR, "/");

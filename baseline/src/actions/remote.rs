@@ -99,6 +99,35 @@ pub enum Standing {
     },
 }
 
+/// Something that can offer an action to another machine.
+///
+/// The trait exists for the same reason [`HttpTransport`] does: a
+/// frontend holding one per peer needs them in one collection, and a
+/// recorded one and a live one are different concrete types. It is
+/// deliberately *not* [`super::ActionExecutor`] — see the module note.
+pub trait Submitter {
+    /// Which machine this acts on.
+    fn peer(&self) -> &str;
+    /// Offers an action, returning as soon as the probe has it.
+    fn submit(&mut self, action: &Action, confirmation: Option<&Confirmation>) -> Submitted;
+    /// Asks what became of an action.
+    fn standing(&mut self, id: &ActionId) -> Standing;
+}
+
+impl<T: HttpTransport> Submitter for RemoteExecutor<T> {
+    fn peer(&self) -> &str {
+        self.peer()
+    }
+
+    fn submit(&mut self, action: &Action, confirmation: Option<&Confirmation>) -> Submitted {
+        self.submit(action, confirmation)
+    }
+
+    fn standing(&mut self, id: &ActionId) -> Standing {
+        self.standing(id)
+    }
+}
+
 /// Offers actions to one peer's probe.
 pub struct RemoteExecutor<T: HttpTransport> {
     transport: T,
