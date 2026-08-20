@@ -253,23 +253,29 @@ all four came back `NotRun` and the whole response took under a second.
 
 #### Task 10: `peers:` in the registry file
 
-- [ ] `RegistryFile` gains `peers: Vec<PeerEntry>`, defaulting to empty — a registry file with no peers is the current file, unchanged.
-- [ ] `PeerEntry { url: String }`, with `deny_unknown_fields`.
-- [ ] `Registry::peers()` alongside `projects()` and `failures()`.
-- [ ] `Registry::scan` yields no peers: a directory scan is a statement about a disk, and a peer is not on it.
+- [x] `RegistryFile` gains `peers: Vec<Peer>`, defaulting to empty — a registry file with no peers is the current file, unchanged.
+- [x] `Peer { url: String }`, with `deny_unknown_fields`.
+- [x] `Registry::peers()` alongside `projects()` and `failures()`.
+- [x] `Registry::scan` yields no peers: a directory scan is a statement about a disk, and a peer is not on it.
+- [x] `projects:` also defaults to empty, and `is_empty()` now means no local project **and** no peer — a cockpit on a machine holding no checkouts, watching the other two, is the configuration this whole arc exists to enable, and a frontend that refused to start on it would refuse the point.
 
-**Verify:** an existing registry file still parses. A file with a
-mistyped `peer:` is rejected rather than silently yielding zero peers —
-the failure mode `deny_unknown_fields` exists to prevent.
+**Verified:** a registry file written before peers existed still loads. A
+mistyped `peer:` and an unknown key inside a peer entry are both refused
+by name, rather than silently yielding zero peers — which would read
+exactly like a machine that is switched off.
 
 #### Task 11: Peer-qualified identity
 
-- [ ] A project carries which peer it came from; local projects carry `None`.
-- [ ] Two projects with the same name from different peers are two distinct rows, not a collision — the desktop holds clones of all three projects, so this is the ordinary case.
-- [ ] Ordering: local projects first in registration order, then each peer's in the order peers are listed. `PlatformState::projects` stays documented as deterministic.
+- [x] `ProjectState::peer` carries which machine a row came from; local projects carry `None`.
+- [x] `qualified_name()` — `sesh` locally, `sesh@pi5` from a peer. Baseline needs *a* unique key; how a cockpit spells it is the cockpit's business.
+- [x] `PlatformState::project` finds local projects only, and `qualified` finds any. A bare name means the checkout on this disk; returning the Pi's would be the collision the qualification exists to stop.
+- [x] `extend_from_peer` appends and stamps, keeping order deterministic: local first, then each peer as listed.
 
-**Verify:** merge a local `sesh` and a peer's `sesh` and assert two rows
-with distinguishable identity, in a stable order across runs.
+**Verified:** a local `sesh` and the Pi's `sesh` are two rows with
+distinct keys and a stable order. A local refresh cannot overwrite a
+peer's row — every local lookup in the cockpit now requires
+`peer.is_none()`, which it did not before this arc and would have been
+a live bug the moment the Pi came up.
 
 ---
 
@@ -277,31 +283,44 @@ with distinguishable identity, in a stable order across runs.
 
 #### Task 12: Fetching a peer on the refresh thread
 
-- [ ] The refresh thread fetches each peer through `HttpTransport`, on the existing poll interval.
-- [ ] Fetch, parse, and re-stamp happen off the UI thread — the constraint that nothing blocks the event loop is unchanged and now has a network behind it.
-- [ ] A peer's projects enter `PlatformState` through the merge from Task 11.
+- [x] `PeerClient` in baseline fetches, parses, re-stamps, re-bases, and tags — reusing `HttpTransport`, so a peer records exactly as GitHub does.
+- [x] `Refresher::spawn_with_peers`; `spawn` delegates to it with none, so all seven existing call sites are untouched.
+- [x] Fetch, parse, and re-stamp happen on the refresh thread — the constraint that nothing blocks the event loop is unchanged and now has a network behind it.
+- [x] `Update::PeerState` carries a peer's **whole** list, because it is also the answer to "what is no longer there" — a project deleted on the Pi has to leave the rail, and per-project updates could never say so.
+- [x] Peers are fetched after local projects: a disk read is cheaper than a round trip, so the rows this machine can answer for appear first.
 
-**Verify:** `FixtureTransport` serving a canned envelope; the cockpit's
-view model shows the peer's projects with correct ages under a frozen
-clock.
+**Unplanned addition.** `impl HttpTransport for Box<T>` in baseline —
+a cockpit holds a live transport and fixture mode holds a recorded one,
+and one list cannot hold two concrete types.
+
+**Verified:** a peer's projects arrive as `sesh@pi5` with correct ages
+under a frozen clock, with no network in the test.
 
 #### Task 13: An unreachable peer degrades only itself
 
-- [ ] A peer that fails to answer becomes `Freshness::Unavailable { last_success }` on its projects' sources.
-- [ ] Local projects and every other peer still render — the rule `Registry` and `aggregate` already share, now applied to peers.
-- [ ] A peer that answers with malformed JSON is unavailable with a *reason*, not a panic and not silence.
+- [x] A failed fetch becomes `Update::PeerFailed`, and the cockpit adds a degradation to that peer's rows — which `sources()` already reports as `Freshness::Unavailable`.
+- [x] **The rows keep their last-known values.** The degradation says why they stopped moving rather than blanking them: the last thing a machine said is still the last thing it said, and it goes stale on its own.
+- [x] A peer that has never answered gets one row named for itself, because a machine configured and unreachable is a fact worth showing — nothing at all is indistinguishable from never having configured it.
+- [x] Malformed JSON and an unreadable version are failures with reasons, not panics on the refresh thread.
 
-**Verify:** three peers, one unreachable and one serving garbage. The
-third peer's projects and all local projects render normally, and both
-failures are visible and named.
+**Verified:** three peers, the middle one unreachable. The other two
+answered, the failure named `laptop` and carried `connection refused`,
+and nothing else lost a row. A peer answering `<html>gateway timeout` and
+one speaking `parallax/v2` each fail by name.
 
 #### Task 14: Recorded peers in fixture mode
 
-- [ ] `panopticon --fixtures <dir>` picks up recorded peer envelopes alongside the recorded projects it already loads.
-- [ ] Determinism holds: two runs against the same fixture set render identical frames, peers included.
+- [x] `fixtures/peers/<name>.json`, one recorded envelope per machine, served by a `FixtureTransport`. The URL is synthesized from the file name — a fixture that could reach a network is not a fixture.
+- [x] Files are sorted, so two runs put the same machine in the same row.
+- [x] An absent `peers/` directory is a set with no peers, not an error: every recording made before this arc still loads.
+- [x] A fixture set may now hold peers and no local projects.
 
-**Verify:** the determinism test panopticon already has, extended to a
-fixture set containing a peer.
+**Verified:** the shipped fixture set carries `tates-laptop`, loads
+identically twice down to every source's rendered freshness, and its
+`Watched` observations arrive re-stamped rather than `Live`. Without
+this, remote hosts would be the one part of the cockpit Plumb could
+never judge — a NO-GO on a screen holding a live peer would mean "the
+laptop answered differently", not "the layout is wrong".
 
 ---
 

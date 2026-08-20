@@ -12,14 +12,21 @@
 //! design and a cockpit that runs `cargo test` every thirty seconds on
 //! the machine running the agent sessions.
 
+use parallax_baseline::adapters::http::HttpTransport;
 use parallax_baseline::adapters::verification::VerificationStatus;
 use parallax_baseline::freshness::Observed;
+use parallax_baseline::peers::PeerClient;
 use parallax_baseline::state::{aggregate_project, ProjectAdapters, ProjectState};
 use parallax_baseline::validate::Validated;
 use std::collections::BTreeMap;
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use std::thread::JoinHandle;
 use std::time::SystemTime;
+
+/// A peer whose transport is decided at runtime: the live one in a
+/// running cockpit, a recorded one in fixture mode. Boxed because those
+/// are different concrete types and they share one list.
+pub type BoxedPeer = PeerClient<Box<dyn HttpTransport + Send>>;
 
 /// Where the refresh thread gets its `now`.
 ///
@@ -84,6 +91,25 @@ pub enum Update {
         /// Why, in one sentence.
         problem: String,
     },
+    /// A peer answered: everything that machine currently holds.
+    ///
+    /// The whole list at once rather than a project at a time, because
+    /// it is also the answer to "what is *no longer* there" — a project
+    /// removed on the Pi has to leave the rail, and a stream of
+    /// per-project updates can never say that.
+    PeerState {
+        /// Which peer, by the name its registry entry gives it.
+        peer: String,
+        /// Every project it serves.
+        projects: Vec<ProjectState>,
+    },
+    /// A peer did not answer.
+    PeerFailed {
+        /// Which peer.
+        peer: String,
+        /// Why, in one sentence.
+        reason: String,
+    },
 }
 
 /// Takes the checks that run a build out of `adapters`, leaving only
@@ -119,6 +145,19 @@ impl Refresher {
     /// The adapters move into the thread and never come back, which is
     /// what makes "nothing is shared" true rather than aspirational.
     pub fn spawn(projects: Vec<(Validated, ProjectAdapters)>, clock: Clock) -> Self {
+        Self::spawn_with_peers(projects, Vec::new(), clock)
+    }
+
+    /// Starts a refresh thread over local projects **and** peers.
+    ///
+    /// A peer goes on the same cadence as everything else and is fetched
+    /// on the same thread, so the rule that nothing blocks the UI holds
+    /// with a network behind it exactly as it held with a disk.
+    pub fn spawn_with_peers(
+        projects: Vec<(Validated, ProjectAdapters)>,
+        peers: Vec<BoxedPeer>,
+        clock: Clock,
+    ) -> Self {
         let (request_tx, request_rx) = channel::<Request>();
         let (update_tx, update_rx) = channel::<Update>();
 
@@ -141,7 +180,7 @@ impl Refresher {
             });
         }
 
-        let handle = std::thread::spawn(move || run(splits, clock, request_rx, update_tx));
+        let handle = std::thread::spawn(move || run(splits, peers, clock, request_rx, update_tx));
 
         Self {
             requests: request_tx,
@@ -211,7 +250,13 @@ fn kind_of(source_name: &str) -> String {
 }
 
 /// The thread body. One request at a time, one send per project.
-fn run(mut splits: Vec<Split>, clock: Clock, requests: Receiver<Request>, updates: Sender<Update>) {
+fn run(
+    mut splits: Vec<Split>,
+    mut peers: Vec<BoxedPeer>,
+    clock: Clock,
+    requests: Receiver<Request>,
+    updates: Sender<Update>,
+) {
     while let Ok(request) = requests.recv() {
         match request {
             Request::Stop => return,
@@ -225,6 +270,28 @@ fn run(mut splits: Vec<Split>, clock: Clock, requests: Receiver<Request>, update
                         aggregate_project(&split.validated, &mut split.reading, clock.now());
                     if updates.send(Update::Project(Box::new(state))).is_err() {
                         return; // the UI is gone
+                    }
+                }
+                // Peers last: local state costs a disk read and a peer
+                // costs a round trip, so the rows this machine can
+                // answer for appear first.
+                for peer in peers.iter_mut() {
+                    let update = match peer.fetch(clock.now()) {
+                        Ok(projects) => Update::PeerState {
+                            peer: peer.name().to_string(),
+                            projects,
+                        },
+                        // One unreachable machine degrades itself and
+                        // nothing else — the rule the registry and
+                        // `aggregate` already share, now across a
+                        // network.
+                        Err(failure) => Update::PeerFailed {
+                            peer: peer.name().to_string(),
+                            reason: failure.reason,
+                        },
+                    };
+                    if updates.send(update).is_err() {
+                        return;
                     }
                 }
             }

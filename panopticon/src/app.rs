@@ -36,6 +36,10 @@ pub struct Panopticon {
     /// "not run this session".
     ran: BTreeMap<String, Vec<String>>,
     refresher: Refresher,
+    /// The peers this cockpit watches, in registry order. Rows are kept
+    /// grouped by it so the rail does not reshuffle as machines answer
+    /// at different speeds.
+    peer_order: Vec<String>,
     binder: InputBinder<Action>,
     clock: Clock,
     poll_interval: Duration,
@@ -76,6 +80,7 @@ impl Panopticon {
             declared,
             ran: BTreeMap::new(),
             refresher,
+            peer_order: Vec::new(),
             binder: binder(),
             clock,
             poll_interval,
@@ -98,6 +103,38 @@ impl Panopticon {
     pub fn with_control(mut self, control: Control) -> Self {
         self.control = control;
         self
+    }
+
+    /// Names the peers this cockpit watches, in registry order.
+    ///
+    /// Seeds a row for each, for the same reason local projects get one:
+    /// a rail that is briefly empty and then briefly wrong is worse than
+    /// one that shows every machine it was told about and fills them in.
+    /// A machine that never answers keeps its row and acquires a reason.
+    pub fn with_peers(mut self, peers: Vec<String>) -> Self {
+        for peer in &peers {
+            self.platform.projects.push(ProjectState {
+                name: peer.clone(),
+                peer: Some(peer.clone()),
+                ..Default::default()
+            });
+        }
+        self.peer_order = peers;
+        self
+    }
+
+    /// Restores the order the rail is documented to have: local projects
+    /// in registry order, then each peer's, in registry order.
+    ///
+    /// Peers answer at different speeds, and without this a row would
+    /// move because a laptop happened to reply before a Pi. `sort_by_key`
+    /// is stable, so nothing within a group moves.
+    fn reorder(&mut self) {
+        let order = &self.peer_order;
+        self.platform.projects.sort_by_key(|p| match &p.peer {
+            None => 0,
+            Some(name) => 1 + order.iter().position(|n| n == name).unwrap_or(order.len()),
+        });
     }
 
     /// Puts an artifact feed on the selected project, for tests that
@@ -180,11 +217,17 @@ impl Panopticon {
                 // An update naming a project the registry never listed is
                 // dropped: the registry is the source of which projects
                 // exist, and a row no manifest backs would be a lie.
+                //
+                // `peer.is_none()` on every local lookup below: these
+                // updates come from this machine's own adapters, and
+                // this desktop holds a clone of `sesh` while the Pi
+                // serves one too. Matching on name alone would let a
+                // local refresh overwrite the Pi's row.
                 if let Some(slot) = self
                     .platform
                     .projects
                     .iter_mut()
-                    .find(|p| p.name == state.name)
+                    .find(|p| p.peer.is_none() && p.name == state.name)
                 {
                     *slot = *state;
                 }
@@ -194,7 +237,7 @@ impl Panopticon {
                     .platform
                     .projects
                     .iter_mut()
-                    .find(|p| p.name == project)
+                    .find(|p| p.peer.is_none() && p.name == project)
                 {
                     for check in checks {
                         let kind = check.value.kind.clone();
@@ -214,13 +257,55 @@ impl Panopticon {
                     .platform
                     .projects
                     .iter_mut()
-                    .find(|p| p.name == project)
+                    .find(|p| p.peer.is_none() && p.name == project)
                 {
                     slot.degradations
                         .push(parallax_baseline::state::Degradation {
                             source: format!("refresh:{project}"),
                             reason: problem,
                         });
+                }
+            }
+            Update::PeerState { peer, projects } => {
+                // The peer's whole list replaces the peer's whole list.
+                // A project removed on that machine has to leave the
+                // rail, and merging row by row could never say so.
+                self.platform
+                    .projects
+                    .retain(|p| p.peer.as_deref() != Some(peer.as_str()));
+                self.platform.extend_from_peer(&peer, projects);
+                self.reorder();
+            }
+            Update::PeerFailed { peer, reason } => {
+                let source = format!("peer:{peer}");
+                let degradation = parallax_baseline::state::Degradation {
+                    source: source.clone(),
+                    reason,
+                };
+                let mut had_rows = false;
+                for slot in self
+                    .platform
+                    .projects
+                    .iter_mut()
+                    .filter(|p| p.peer.as_deref() == Some(peer.as_str()))
+                {
+                    // The values it served last time stay on screen and
+                    // go stale on their own. This adds why they stopped
+                    // moving; it does not blank them, because the last
+                    // thing a machine said is still the last thing it
+                    // said.
+                    slot.degradations.retain(|d| d.source != source);
+                    slot.degradations.push(degradation.clone());
+                    had_rows = true;
+                }
+                if !had_rows {
+                    self.platform.projects.push(ProjectState {
+                        name: peer.clone(),
+                        peer: Some(peer),
+                        degradations: vec![degradation],
+                        ..Default::default()
+                    });
+                    self.reorder();
                 }
             }
         }

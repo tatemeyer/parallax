@@ -1,0 +1,35 @@
+{
+  "apiVersion": "parallax/v1",
+  "peer": "tates-laptop",
+  "now": { "secs_since_epoch": 1700000000, "nanos_since_epoch": 0 },
+  "projects": [
+    {
+      "name": "ttui",
+      "language": "rust",
+      "methodology": "methodology-first",
+      "verification": [
+        {
+          "value": { "kind": "lint", "outcome": "NotRun", "detail": "not run by the probe: `cargo clippy --all-targets -- -D warnings` runs a build" },
+          "observedAt": { "secs_since_epoch": 1700000000, "nanos_since_epoch": 0 },
+          "source": { "kind": "watched" }
+        },
+        {
+          "value": { "kind": "perceptual", "outcome": "Pass", "detail": "GO" },
+          "observedAt": { "secs_since_epoch": 1699999940, "nanos_since_epoch": 0 },
+          "source": { "kind": "watched" }
+        }
+      ],
+      "sessions": {
+        "value": [
+          {
+            "name": "worktree-pane-borders",
+            "path": "/home/tate/TTUI/.claude/worktrees/pane-borders",
+            "last_activity": { "secs_since_epoch": 1699999880, "nanos_since_epoch": 0 }
+          }
+        ],
+        "observedAt": { "secs_since_epoch": 1700000000, "nanos_since_epoch": 0 },
+        "source": { "kind": "watched" }
+      }
+    }
+  ]
+}

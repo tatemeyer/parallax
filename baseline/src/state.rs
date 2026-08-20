@@ -92,6 +92,15 @@ pub struct Degradation {
 pub struct ProjectState {
     /// The project's short name.
     pub name: String,
+    /// Which peer this came from, or `None` when it was read from this
+    /// machine's own disk.
+    ///
+    /// A name alone stopped identifying a project once the platform
+    /// spanned machines: this desktop holds clones of all three, so
+    /// `sesh` here and `sesh` on the Pi are two different answers about
+    /// two different working trees, and collapsing them would hide
+    /// whichever was found second.
+    pub peer: Option<String>,
     /// Its declared methodology. **Display only — never branched on.**
     pub methodology: Option<String>,
     /// Its primary language, for display.
@@ -121,10 +130,53 @@ pub struct PlatformState {
     pub projects: Vec<ProjectState>,
 }
 
+impl ProjectState {
+    /// A key unique across machines: `sesh` locally, `sesh@pi5` from a
+    /// peer.
+    ///
+    /// The core needs *a* unique key — anything holding a map of
+    /// projects breaks without one the moment two machines agree on a
+    /// name. How a cockpit spells it on screen is the cockpit's
+    /// business; this is the identity underneath.
+    pub fn qualified_name(&self) -> String {
+        match &self.peer {
+            Some(peer) => format!("{}@{peer}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
 impl PlatformState {
-    /// Finds a project by name.
+    /// Finds a **local** project by name.
+    ///
+    /// Deliberately does not search peers: a caller passing a bare name
+    /// means the one on this disk, and silently returning a remote
+    /// project of the same name would be the collision this design
+    /// exists to prevent.
     pub fn project(&self, name: &str) -> Option<&ProjectState> {
-        self.projects.iter().find(|p| p.name == name)
+        self.projects
+            .iter()
+            .find(|p| p.name == name && p.peer.is_none())
+    }
+
+    /// Finds any project by the key [`ProjectState::qualified_name`]
+    /// returns.
+    pub fn qualified(&self, qualified_name: &str) -> Option<&ProjectState> {
+        self.projects
+            .iter()
+            .find(|p| p.qualified_name() == qualified_name)
+    }
+
+    /// Appends a peer's projects, tagging each with where it came from.
+    ///
+    /// Order is local projects first, then each peer in the order the
+    /// registry listed them, which keeps `projects` deterministic — the
+    /// property fixture mode depends on to render identical frames twice.
+    pub fn extend_from_peer(&mut self, peer: &str, projects: Vec<ProjectState>) {
+        self.projects.extend(projects.into_iter().map(|mut p| {
+            p.peer = Some(peer.to_string());
+            p
+        }));
     }
 }
 
@@ -628,5 +680,83 @@ mod freshness_surface_tests {
         assert_eq!(degraded.len(), 1);
         assert_eq!(degraded[0].0, "ttui");
         assert_eq!(degraded[0].1.source, "work:stub");
+    }
+}
+
+#[cfg(test)]
+mod peer_identity_tests {
+    use super::*;
+
+    fn project(name: &str) -> ProjectState {
+        ProjectState {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_local_project_is_named_by_itself_and_a_remote_one_by_its_peer() {
+        assert_eq!(project("sesh").qualified_name(), "sesh");
+
+        let mut platform = PlatformState::default();
+        platform.extend_from_peer("pi5", vec![project("sesh")]);
+        assert_eq!(platform.projects[0].qualified_name(), "sesh@pi5");
+        assert_eq!(platform.projects[0].peer.as_deref(), Some("pi5"));
+    }
+
+    /// The desktop holds clones of all three projects, so this is the
+    /// ordinary case rather than an edge one. Collapsing them would hide
+    /// whichever was found second.
+    #[test]
+    fn the_same_name_on_two_machines_is_two_rows() {
+        let mut platform = PlatformState {
+            projects: vec![project("sesh")],
+        };
+        platform.extend_from_peer("pi5", vec![project("sesh")]);
+
+        assert_eq!(platform.projects.len(), 2);
+        let keys: Vec<String> = platform
+            .projects
+            .iter()
+            .map(ProjectState::qualified_name)
+            .collect();
+        assert_eq!(keys, vec!["sesh".to_string(), "sesh@pi5".to_string()]);
+    }
+
+    /// A bare name means the checkout on this disk. Returning the Pi's
+    /// instead would be the collision the qualification exists to stop.
+    #[test]
+    fn looking_up_a_bare_name_finds_the_local_project_not_a_peers() {
+        let mut platform = PlatformState::default();
+        platform.extend_from_peer("pi5", vec![project("sesh")]);
+        assert!(
+            platform.project("sesh").is_none(),
+            "a remote project answered to a bare local name"
+        );
+
+        platform.projects.insert(0, project("sesh"));
+        assert_eq!(platform.project("sesh").unwrap().peer, None);
+        assert_eq!(
+            platform.qualified("sesh@pi5").unwrap().peer.as_deref(),
+            Some("pi5")
+        );
+    }
+
+    /// Fixture mode renders identical frames twice, which needs a
+    /// deterministic order: local first, then peers as listed.
+    #[test]
+    fn projects_are_ordered_local_first_then_each_peer_in_turn() {
+        let mut platform = PlatformState {
+            projects: vec![project("parallax")],
+        };
+        platform.extend_from_peer("pi5", vec![project("sesh")]);
+        platform.extend_from_peer("laptop", vec![project("ttui")]);
+
+        let keys: Vec<String> = platform
+            .projects
+            .iter()
+            .map(ProjectState::qualified_name)
+            .collect();
+        assert_eq!(keys, vec!["parallax", "sesh@pi5", "ttui@laptop"]);
     }
 }

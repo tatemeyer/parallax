@@ -108,6 +108,18 @@ pub trait HttpTransport {
     fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, AdapterError>;
 }
 
+/// A boxed transport is a transport.
+///
+/// Needed because a caller holding several sources of different concrete
+/// types — the live one in a running cockpit, a recorded one in fixture
+/// mode — has to put them in one collection, and the generic parameter
+/// cannot be two things at once.
+impl<T: HttpTransport + ?Sized> HttpTransport for Box<T> {
+    fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, AdapterError> {
+        (**self).send(request)
+    }
+}
+
 /// The live transport. **The only type in this crate that touches the
 /// network**, and therefore the only one exempt from automated testing
 /// under the real-external-service precedent. It holds no logic beyond

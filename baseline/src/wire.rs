@@ -213,6 +213,12 @@ impl ProjectWire {
         // fixes its type and the other three stop compiling.
         ProjectState {
             name: self.name,
+            // Not a per-project field on the wire: the envelope names
+            // the peer once, for all of them. `PeerClient::fetch` stamps
+            // it onto each after parsing, so a probe cannot claim one
+            // name for itself and a different one for a project it
+            // serves.
+            peer: None,
             methodology: self.methodology,
             language: self.language,
             work: self
