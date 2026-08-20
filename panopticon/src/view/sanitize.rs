@@ -16,8 +16,22 @@
 //!
 //! **The escapes are stripped, never interpreted.** Turning them into
 //! real colours would be the same "observed data steers the display"
-//! problem in a nicer suit — and `ttui` has no per-cell foreground
-//! colour to turn them into.
+//! problem in a nicer suit: a pull request title would get to choose
+//! what colour it was, and the one thing a monitoring screen owns is
+//! what its own colours mean.
+//!
+//! An earlier version of this note added that `ttui` had no per-cell
+//! foreground colour to turn them into. **That was wrong.**
+//! `ttui::buffer::Cell` carries `fg` and `bg` as
+//! `crossterm::style::Color`, which includes `Rgb`, and the terminal
+//! emits them per differing cell. What is true is that *this crate* has
+//! never set `fg` anywhere, which is not the same claim. Corrected here
+//! rather than quietly deleted, because the false version was a reason
+//! not to attempt work that is in fact unblocked — see
+//! `docs/design/specs/parallax/2026-08-20-metrics-in-the-cockpit-design.md`.
+//!
+//! The argument above is unaffected. Colour being available is not a
+//! reason to let observed bytes pick it.
 //!
 //! **This does not belong in `parallax-baseline`.** A library that
 //! silently rewrote what it observed would be worse than one that
