@@ -16,7 +16,7 @@ use parallax_baseline::adapters::http::UreqTransport;
 use parallax_baseline::freshness::Freshness;
 use parallax_baseline::peers::PeerClient;
 use parallax_baseline::registry::Registry;
-use parallax_probe::server::Probe;
+use parallax_probe::server::{Probe, Serving};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -44,7 +44,14 @@ fn spawn(root: PathBuf, peer: &'static str) -> String {
     let url = probe.url();
     std::thread::spawn(move || {
         let registry = Registry::scan(&root);
-        probe.serve(&registry, &AdapterConfig::default(), peer);
+        probe.serve(&Serving {
+            registry: &registry,
+            config: &AdapterConfig::default(),
+            peer,
+            // These are the read tests, and this is the default probe:
+            // no control, so nothing here can cause the machine to act.
+            control: None,
+        });
     });
     url
 }

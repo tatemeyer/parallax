@@ -7,7 +7,7 @@
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use panopticon::app::Panopticon;
-use panopticon::control::Control;
+use panopticon::control::{Control, Destination};
 use panopticon::refresh::{Clock, Refresher};
 use parallax_baseline::actions::{ActionError, ActionExecutor, ActionOutcome, Authorized, Effect};
 use parallax_baseline::freshness::DEFAULT_POLL_INTERVAL;
@@ -69,10 +69,10 @@ fn harness() -> Harness {
     let projects = vec![(validated(), ProjectAdapters::default())];
     let clock = Clock::Frozen(at(0));
     let refresher = Refresher::spawn(projects, clock);
-    let control = Control::new(vec![Some(Box::new(Recording {
+    let control = Control::new(vec![Destination::local(Recording {
         calls: calls.clone(),
         performed: performed.clone(),
-    }))]);
+    })]);
     let app = Panopticon::new(&[validated()], refresher, clock, DEFAULT_POLL_INTERVAL)
         .with_control(control);
     Harness {

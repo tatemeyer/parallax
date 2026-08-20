@@ -7,10 +7,11 @@
 //! from recorded state.
 
 use panopticon::app::Panopticon;
-use panopticon::control::Control;
+use panopticon::control::{Control, Destination};
+use panopticon::courier::{BoxedSubmitter, Courier};
 use panopticon::fixtures;
 use panopticon::refresh::{BoxedPeer, Clock, Refresher};
-use parallax_baseline::actions::ActionExecutor;
+use parallax_baseline::actions::RemoteExecutor;
 use parallax_baseline::adapters::factory::{executor_for, from_manifest, AdapterConfig};
 use parallax_baseline::adapters::http::{HttpTransport, UreqTransport};
 use parallax_baseline::freshness::DEFAULT_POLL_INTERVAL;
@@ -20,6 +21,7 @@ use parallax_baseline::state::ProjectAdapters;
 use parallax_baseline::validate::Validated;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const USAGE: &str = "\
 panopticon — the Parallax cockpit
@@ -122,12 +124,22 @@ fn main() -> ExitCode {
     // A peer is named by its registry entry, never by what it answers
     // with, so the rail can show a machine it has not reached yet.
     let peer_names: Vec<String> = peers.iter().map(|p| p.name().to_string()).collect();
+    let peer_urls: Vec<(String, String)> = peers
+        .iter()
+        .map(|p| (p.name().to_string(), p.url().to_string()))
+        .collect();
 
     let validated: Vec<Validated> = projects.iter().map(|(v, _)| v.clone()).collect();
     let control = Control::new(control_for(&validated, &config, live));
+    // Built before the peers move into the refresh thread, and from the
+    // same list, so a machine this cockpit watches is a machine it can
+    // at least *offer* an action to. Whether that machine accepts is the
+    // machine's own decision, answered at the point of asking.
+    let courier = courier_for(&peer_urls, live);
     let refresher = Refresher::spawn_with_peers(projects, peers, clock);
     let mut app = Panopticon::new(&validated, refresher, clock, DEFAULT_POLL_INTERVAL)
         .with_control(control)
+        .with_courier(courier)
         .with_peers(peer_names);
 
     if let Err(e) = ttui::app::run(&mut app) {
@@ -137,25 +149,80 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// An executor per project, in the same order the rail shows them.
+/// A destination per **local** project, in the same order the rail shows
+/// them. A peer's rows are not here: they are routed by machine name,
+/// because they come and go as that machine answers.
 ///
-/// `live` is false in fixture mode, and then every slot is `None`. A
-/// cockpit rendering recorded state that could merge a real pull request
-/// is a demo with a loaded weapon in it.
-fn control_for(
-    projects: &[Validated],
-    config: &AdapterConfig,
-    live: bool,
-) -> Vec<Option<Box<dyn ActionExecutor>>> {
+/// `live` is false in fixture mode, and then every destination goes
+/// nowhere and says so. A cockpit rendering recorded state that could
+/// merge a real pull request is a demo with a loaded weapon in it.
+fn control_for(projects: &[Validated], config: &AdapterConfig, live: bool) -> Vec<Destination> {
     projects
         .iter()
         .map(|v| {
             if !live {
-                return None;
+                return Destination::Nowhere("the cockpit is running against fixtures".to_string());
             }
-            executor_for(v, config).map(|e| Box::new(e) as Box<dyn ActionExecutor>)
+            match executor_for(v, config) {
+                Some(e) => Destination::Local(Box::new(e)),
+                None => Destination::Nowhere(
+                    "this project declares no work feed to address".to_string(),
+                ),
+            }
         })
         .collect()
+}
+
+/// A courier over every machine this cockpit watches.
+///
+/// **Every peer, not a configured subset.** Whether a machine will
+/// accept an action is that machine's decision, made by the probe on it
+/// and answered at the point of asking; a second list here would be a
+/// second place for that to be wrong, and the one that cannot see the
+/// flag. `live` is false in fixture mode, and then it carries nothing —
+/// a recorded cockpit that could act on a real Pi is a demo with a
+/// loaded weapon in it.
+fn courier_for(peers: &[(String, String)], live: bool) -> Courier {
+    if !live {
+        return Courier::idle();
+    }
+    // Distinguishes this run of this cockpit from the last one, so a
+    // restart cannot reuse ids a probe already has answers filed under.
+    let run = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let client = this_machine();
+    let submitters = peers
+        .iter()
+        .map(|(name, url)| {
+            Box::new(RemoteExecutor::new(
+                UreqTransport::new(),
+                url,
+                name,
+                client.clone(),
+                run,
+            )) as BoxedSubmitter
+        })
+        .collect();
+    Courier::spawn(submitters)
+}
+
+/// How this machine names itself in an action it sends.
+///
+/// Recorded by the far probe as a **claim** — nothing authenticates it,
+/// and it exists so an audit line says `desktop` rather than the
+/// `127.0.0.1` every request arrives from behind `tailscale serve`.
+fn this_machine() -> String {
+    non_empty("COMPUTERNAME")
+        .or_else(|| non_empty("HOSTNAME"))
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Turns the chosen source into projects and a clock.

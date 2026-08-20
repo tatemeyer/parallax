@@ -6,7 +6,8 @@
 //! the UI thread is the rejected design wearing a different hat.
 
 use crate::bell::Bell;
-use crate::control::Control;
+use crate::control::{Control, Target};
+use crate::courier::{Answer, Courier, Errand};
 use crate::keys::{binder, Action};
 use crate::refresh::{Clock, Refresher, Request, Update};
 use crate::view::model::Declared;
@@ -51,6 +52,10 @@ pub struct Panopticon {
     quit: bool,
     bell: Bell,
     control: Control,
+    /// The thread that carries actions to other machines. Idle unless a
+    /// caller hands over submitters, so a cockpit that was told about no
+    /// controllable machine cannot act on one.
+    courier: Courier,
 }
 
 impl Panopticon {
@@ -94,6 +99,7 @@ impl Panopticon {
             // Inert until a caller hands over executors. A cockpit run
             // against fixtures keeps this one and refuses out loud.
             control: Control::inert(projects.len()),
+            courier: Courier::idle(),
         }
     }
 
@@ -102,6 +108,16 @@ impl Panopticon {
     /// exactly what fixture mode wants.
     pub fn with_control(mut self, control: Control) -> Self {
         self.control = control;
+        self
+    }
+
+    /// Gives the cockpit the ability to act on **other** machines.
+    ///
+    /// Separate from `with_control` because the two are separately
+    /// absent: a cockpit can act here and not there, which is the
+    /// ordinary case, since control is off by default on every probe.
+    pub fn with_courier(mut self, courier: Courier) -> Self {
+        self.courier = courier;
         self
     }
 
@@ -154,11 +170,11 @@ impl Panopticon {
     }
 
     /// What this session has attempted, for the log pane.
-    fn log_lines(&self) -> Vec<(String, String, bool)> {
+    fn log_lines(&self) -> Vec<(String, String, &'static str)> {
         self.control
             .log()
             .iter()
-            .map(|e| (e.summary.clone(), e.result.clone(), e.ok))
+            .map(|e| (e.summary.clone(), e.result.clone(), e.outcome.mark()))
             .collect()
     }
 
@@ -363,6 +379,48 @@ impl Panopticon {
         Some((project.qualified_name(), peer))
     }
 
+    /// Which machine the selected row's actions go to.
+    ///
+    /// The action itself always carries the **bare** project name:
+    /// `sesh@pi5` distinguishes two rows on this screen and means
+    /// nothing on the Pi, where the project is just `sesh`. The machine
+    /// travels here instead, which is the whole of what routing is.
+    fn target(&self) -> Target {
+        match self
+            .platform
+            .projects
+            .get(self.selected)
+            .and_then(|p| p.peer.clone())
+        {
+            Some(peer) => Target::On(peer),
+            None => Target::Here(self.selected),
+        }
+    }
+
+    /// Hands anything bound for another machine to the courier.
+    ///
+    /// Called after every interaction that could have produced one. The
+    /// UI never submits: see `courier`.
+    fn dispatch(&mut self) {
+        for submission in self.control.take_outbox() {
+            self.courier.send(Errand::Submit {
+                peer: submission.peer,
+                action: submission.action,
+                confirmation: submission.confirmation,
+            });
+        }
+    }
+
+    /// Applies whatever the courier has heard back.
+    fn collect(&mut self) {
+        for answer in self.courier.drain() {
+            match answer {
+                Answer::Submitted { summary, outcome } => self.control.submitted(&summary, outcome),
+                Answer::Resolved { id, standing } => self.control.resolved(&id, standing),
+            }
+        }
+    }
+
     fn act(&mut self, action: Action) {
         // Everything this cockpit can *do* reaches only the machine it
         // runs on: its executors are built from local projects, and a
@@ -377,14 +435,21 @@ impl Panopticon {
         // exhaustive so adding one forces the decision.
         if action.acts_on_the_selected_project() {
             if let Some((name, peer)) = self.selected_remote() {
-                self.control.refuse(
-                    format!("{name}: {action:?}"),
-                    format!(
-                        "{name} is on {peer}. This cockpit acts only on the machine it runs on — \
-                         control across the wire is not built yet."
-                    ),
-                );
-                return;
+                // A machine this cockpit can see but not act on is the
+                // ordinary case — control is off by default on every
+                // probe. Refused here, before the prompt, so an operator
+                // does not type a pull request number to approve
+                // something that was never going to be sent.
+                if !self.courier.carries_to(&peer) {
+                    self.control.refuse(
+                        format!("{name}: {action:?}"),
+                        format!(
+                            "{name} is on {peer}, and this cockpit cannot act there. The probe \
+                             on {peer} was started without `--allow-control`."
+                        ),
+                    );
+                    return;
+                }
             }
         }
 
@@ -433,7 +498,7 @@ impl Panopticon {
                     // a question on screen whose only answer is no.
                     if row.kind == '>' {
                         self.control.offer(
-                            self.selected,
+                            self.target(),
                             BaseAction::MergePullRequest {
                                 project,
                                 number: row.number,
@@ -446,6 +511,7 @@ impl Panopticon {
                 if let (Some(project), Some(row)) = (self.selected_name(), self.selected_work()) {
                     let question = format!("label #{}", row.number);
                     self.control.ask(
+                        self.target(),
                         BaseAction::SetAutonomyLabel {
                             project,
                             item: row.number,
@@ -458,7 +524,7 @@ impl Panopticon {
             Action::RequestReview => {
                 if let (Some(project), Some(row)) = (self.selected_name(), self.selected_work()) {
                     self.control.offer(
-                        self.selected,
+                        self.target(),
                         BaseAction::RequestReReview {
                             project,
                             item: row.number,
@@ -469,7 +535,7 @@ impl Panopticon {
             Action::Capture => {
                 if let Some(project) = self.selected_name() {
                     self.control.offer(
-                        self.selected,
+                        self.target(),
                         BaseAction::TriggerCapture {
                             project,
                             scenario: None,
@@ -480,6 +546,7 @@ impl Panopticon {
             Action::Push => {
                 if let Some(project) = self.selected_name() {
                     self.control.ask(
+                        self.target(),
                         BaseAction::Push {
                             project,
                             branch: String::new(),
@@ -504,7 +571,7 @@ impl Panopticon {
                         Ruling::Overruled
                     };
                     self.control.offer(
-                        self.selected,
+                        self.target(),
                         BaseAction::RuleFinding {
                             project,
                             fingerprint,
@@ -539,21 +606,25 @@ impl App for Panopticon {
                 match key.code {
                     KeyCode::Esc => self.control.cancel(),
                     KeyCode::Enter => {
-                        self.control.key(self.selected, None);
+                        self.control.key(None);
                     }
                     KeyCode::Backspace => {
-                        self.control.key(self.selected, Some('\u{8}'));
+                        self.control.key(Some('\u{8}'));
                     }
                     KeyCode::Char(c) => {
-                        self.control.key(self.selected, Some(c));
+                        self.control.key(Some(c));
                     }
                     _ => {}
                 }
             }
+            // An answered question can have produced an action bound
+            // for another machine.
+            self.dispatch();
             return;
         }
         if let Some(action) = self.binder.feed(event) {
             self.act(action);
+            self.dispatch();
         }
     }
 
@@ -592,12 +663,17 @@ impl App for Panopticon {
         self.since_refresh += elapsed;
         if self.since_refresh >= self.poll_interval {
             self.refresher.request(Request::RefreshReads);
+            // On the same cadence, and for the same reason: an action
+            // accepted by another machine is finished on that machine's
+            // schedule, and the only way to learn of it is to ask.
+            self.courier.send(Errand::Poll);
             self.since_refresh = Duration::ZERO;
         }
 
         for update in self.refresher.drain() {
             self.apply(update);
         }
+        self.collect();
 
         // After the updates, not before: the bell reports what the frame
         // is about to show.
@@ -687,7 +763,7 @@ mod tests {
 
         let log = app.control.log();
         assert_eq!(log.len(), 1, "the keypress vanished without a word");
-        assert!(!log[0].ok);
+        assert!(!log[0].ok());
         assert!(
             log[0].result.contains("pi5"),
             "the refusal must name the machine: {}",
@@ -695,7 +771,14 @@ mod tests {
         );
     }
 
-    /// Every verb that reaches an executor or the local refresh thread.
+    /// Every verb that reaches an executor or the local refresh thread,
+    /// against a machine this cockpit cannot act on — which is the
+    /// default, because control is off on every probe until asked for.
+    ///
+    /// Refused **before the prompt**, which is the part worth asserting:
+    /// an operator who typed a pull request number and only then learned
+    /// the action was never going to be sent has been made to approve
+    /// something twice for nothing.
     #[test]
     fn no_verb_that_acts_on_a_project_reaches_a_peers_row() {
         for action in [
@@ -723,6 +806,210 @@ mod tests {
                 "{action:?} put a confirmation on screen for an action it cannot perform"
             );
         }
+    }
+
+    /// A submitter that answers from a script, so a cockpit can be given
+    /// a machine it may act on without a socket.
+    struct Carrier {
+        peer: String,
+        offered: std::sync::Arc<std::sync::Mutex<Vec<BaseAction>>>,
+        reply: parallax_baseline::actions::Submitted,
+    }
+
+    impl parallax_baseline::actions::Submitter for Carrier {
+        fn peer(&self) -> &str {
+            &self.peer
+        }
+
+        fn submit(
+            &mut self,
+            action: &BaseAction,
+            _c: Option<&parallax_baseline::actions::Confirmation>,
+        ) -> parallax_baseline::actions::Submitted {
+            self.offered.lock().unwrap().push(action.clone());
+            self.reply.clone()
+        }
+
+        fn standing(
+            &mut self,
+            _id: &parallax_baseline::actions::wire::ActionId,
+        ) -> parallax_baseline::actions::Standing {
+            parallax_baseline::actions::Standing::Running
+        }
+    }
+
+    type Offered = std::sync::Arc<std::sync::Mutex<Vec<BaseAction>>>;
+
+    /// A cockpit that watches `pi5` **and may act on it**.
+    fn cockpit_that_can_act_on_the_peer(
+        reply: parallax_baseline::actions::Submitted,
+    ) -> (Panopticon, Offered) {
+        let offered: Offered = Default::default();
+        let courier = crate::courier::Courier::spawn(vec![Box::new(Carrier {
+            peer: "pi5".into(),
+            offered: std::sync::Arc::clone(&offered),
+            reply,
+        })]);
+        (cockpit_with_a_peers_clone().with_courier(courier), offered)
+    }
+
+    fn accepted() -> parallax_baseline::actions::Submitted {
+        parallax_baseline::actions::Submitted::Accepted {
+            id: parallax_baseline::actions::wire::ActionId::new("desktop-1-1"),
+            run: parallax_baseline::actions::wire::ProbeRun::new("r1"),
+        }
+    }
+
+    /// Blocks briefly for the courier's answer rather than hanging.
+    fn settle(app: &mut Panopticon) {
+        for _ in 0..2000 {
+            app.collect();
+            if !app.control.log().is_empty() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// The promise the last arc's refusal made. `p` on the Pi's `sesh`
+    /// now goes to the Pi rather than being refused — and it carries the
+    /// **bare** name, because `sesh@pi5` means nothing on the machine
+    /// where the project is just `sesh`.
+    #[test]
+    fn a_verb_on_a_peers_row_is_offered_to_that_machine() {
+        let (mut app, offered) = cockpit_that_can_act_on_the_peer(accepted());
+        select(&mut app, "sesh@pi5");
+
+        app.act(Action::Capture);
+        app.dispatch();
+        // Waits for the courier to have actually offered it. The log
+        // line appears synchronously, so waiting on that would prove
+        // only that the keypress was recorded.
+        for _ in 0..2000 {
+            if !offered.lock().unwrap().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        let offered = offered.lock().unwrap();
+        assert_eq!(offered.len(), 1, "nothing was offered to the Pi");
+        assert_eq!(
+            offered[0].project(),
+            "sesh",
+            "the qualified name crossed the wire"
+        );
+    }
+
+    /// And the local row still goes to the local executor rather than
+    /// out over a network.
+    #[test]
+    fn a_local_row_is_not_offered_to_any_machine() {
+        let (mut app, offered) = cockpit_that_can_act_on_the_peer(accepted());
+        select(&mut app, "sesh");
+
+        app.act(Action::Capture);
+        app.dispatch();
+        std::thread::sleep(Duration::from_millis(50));
+
+        assert!(
+            offered.lock().unwrap().is_empty(),
+            "a local action was sent to another machine"
+        );
+    }
+
+    /// The operator is approving an action *and* a destination, and only
+    /// one of them is on the screen.
+    #[test]
+    fn a_confirmation_for_a_remote_action_names_the_machine() {
+        let (mut app, _) = cockpit_that_can_act_on_the_peer(accepted());
+        select(&mut app, "sesh@pi5");
+
+        app.act(Action::Push);
+
+        let question = app.control.prompt().expect("a question was asked").line();
+        assert!(question.contains("pi5"), "got {question}");
+    }
+
+    /// A local one gains nothing from the noise: "on this machine" is
+    /// what every prompt has always meant.
+    #[test]
+    fn a_confirmation_for_a_local_action_does_not() {
+        let (mut app, _) = cockpit_that_can_act_on_the_peer(accepted());
+        select(&mut app, "sesh");
+
+        app.act(Action::Push);
+
+        let question = app.control.prompt().expect("a question was asked").line();
+        assert!(!question.contains("pi5"), "got {question}");
+    }
+
+    /// The arc's central claim, at the only place the operator sees it:
+    /// a submission whose answer was lost is neither a success nor a
+    /// failure, and the log must not round it to either.
+    #[test]
+    fn a_lost_answer_reads_as_unknown_rather_than_failed() {
+        let (mut app, _) =
+            cockpit_that_can_act_on_the_peer(parallax_baseline::actions::Submitted::Unknown {
+                id: parallax_baseline::actions::wire::ActionId::new("desktop-1-1"),
+                reason: "pi5: read timed out".into(),
+            });
+        select(&mut app, "sesh@pi5");
+
+        app.act(Action::Capture);
+        app.dispatch();
+        settle(&mut app);
+        // The submission answer arrives after the "offered" line, so
+        // give the update a moment to land on it.
+        for _ in 0..2000 {
+            app.collect();
+            if app.control.log()[0].outcome != crate::control::Outcome::Running {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        let entry = &app.control.log()[0];
+        assert_eq!(
+            entry.outcome,
+            crate::control::Outcome::Unknown,
+            "a lost answer was rendered as {:?}: {}",
+            entry.outcome,
+            entry.result
+        );
+        assert!(!entry.ok(), "and it is certainly not a success");
+        assert_ne!(
+            entry.outcome.mark(),
+            crate::control::Outcome::Failed.mark(),
+            "unknown must not wear the failure mark"
+        );
+        assert!(
+            entry.result.contains("may have happened"),
+            "the operator must be told the action may have run: {}",
+            entry.result
+        );
+    }
+
+    /// One action is one line. A submission that reported twice — once
+    /// offered, once answered — would have an operator counting merges
+    /// count two.
+    #[test]
+    fn an_answer_rewrites_the_line_it_belongs_to_rather_than_adding_one() {
+        let (mut app, _) = cockpit_that_can_act_on_the_peer(accepted());
+        select(&mut app, "sesh@pi5");
+
+        app.act(Action::Capture);
+        app.dispatch();
+        settle(&mut app);
+        for _ in 0..2000 {
+            app.collect();
+            if app.control.log()[0].id.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+
+        assert_eq!(app.control.log().len(), 1, "{:?}", app.control.log());
     }
 
     /// And the guard must not swallow the local case, which is the one

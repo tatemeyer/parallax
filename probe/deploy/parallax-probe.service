@@ -35,6 +35,15 @@ Type=simple
 # A wrong path is not an error: the probe starts and serves an empty
 # machine, which looks exactly like a machine with nothing registered.
 # Check it with `curl -s 127.0.0.1:8737/state` before walking away.
+#
+# `--allow-control` is deliberately absent, and adding it is a decision
+# rather than a default. Without it this machine can be *looked at* from
+# the tailnet; with it, anyone who can reach the probe can merge, push,
+# and start agent runs here. The probe with no flag builds no executors
+# at all, so the refusal is the absence of a capability rather than a
+# check in front of one.
+#
+# If you do add it, read the two lines about ProtectHome below first.
 ExecStart=%h/.local/bin/parallax-probe \
   --projects-root %h/Dev \
   --port 8737
@@ -58,6 +67,21 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 RestrictAddressFamilies=AF_INET AF_INET6
+
+# **`--allow-control` needs this relaxed.** A ruling is appended to
+# <project>/.plumb/rulings.jsonl and a capture writes artifacts, both
+# under this user's home — and `ProtectHome=read-only` makes every one
+# of them fail with a permission error that names systemd nowhere and
+# reads, from the cockpit two rooms away, like the action itself was
+# rejected. Swap the line above for these two, narrowed to the tree the
+# probe actually serves:
+#
+#   ProtectHome=tmpfs
+#   ReadWritePaths=%h/Dev
+#
+# A read-only probe should keep the stricter line. It is the one that
+# makes "this machine can only be looked at" true of the process as well
+# as of its routes.
 
 [Install]
 WantedBy=default.target

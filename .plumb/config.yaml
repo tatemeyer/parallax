@@ -49,9 +49,12 @@ scenarios:
       checks. Then `5`, which shows what this session has done.
       The final frame's detail pane holds exactly one entry, and it is a
       refusal rather than a result: it names the machine the row lives on
-      and says this cockpit acts only on the machine it runs on. Nothing
+      and says this cockpit cannot act there, because the probe on that
+      machine was started without the flag that would let it. Nothing
       asks for confirmation at any point, because there is nothing to
-      confirm — the action was never offered. The rail is unchanged
+      confirm — the action was never offered, and being told after
+      typing a confirmation would be worse than being told before it.
+      The rail is unchanged
       throughout and no other project's row reacts, which is the whole
       point: the same keypress once ran a build against the local project
       that happened to share the remote one's name.

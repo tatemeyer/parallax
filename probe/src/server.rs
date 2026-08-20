@@ -5,25 +5,46 @@
 //! machine can open a socket to it. `tailscale serve` terminates TLS
 //! and forwards to the loopback port, and the tailnet decides who may
 //! reach *that*. [`bind_address`] is where the claim is enforced.
+//!
+//! **Control is off unless it was asked for.** `/state` is a
+//! disclosure; `POST /action` is a shell, and the two must not arrive
+//! together by default. A probe started without control refuses the
+//! write routes at the route table, before a body is read — see
+//! [`Serving::control`].
 
+use parallax_baseline::actions::wire::{ActionId, ActionRequest, SubmitReply};
+use parallax_baseline::actions::ACTION_PATH;
 use parallax_baseline::adapters::factory::AdapterConfig;
 use parallax_baseline::registry::Registry;
+use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
 use std::time::SystemTime;
 use tiny_http::{Header, Method, Request, Response, Server};
 
+use crate::control::Control;
 use crate::state::envelope;
 
 /// The default loopback port.
 pub const DEFAULT_PORT: u16 = 8737;
 
+/// The most of a submission body the probe will read.
+///
+/// An action is a few hundred bytes. Reading without a bound would let
+/// anything that can reach the socket spend this machine's memory, and
+/// on the Pi that is the machine running the television.
+const MAX_BODY: u64 = 64 * 1024;
+
 /// What a request asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     /// Everything this machine knows, aggregated.
     State,
     /// Liveness, without a scan.
     Health,
+    /// Take an action on this machine.
+    Submit,
+    /// What became of an action this machine was asked to take.
+    Status(String),
     /// No such path.
     NotFound,
     /// A known path, asked for the wrong way.
@@ -36,10 +57,19 @@ pub enum Route {
 pub fn route(method: &Method, url: &str) -> Route {
     let path = url.split('?').next().unwrap_or(url);
     let path = path.strip_suffix('/').unwrap_or(path);
+    if let Some(id) = path.strip_prefix(&format!("{ACTION_PATH}/")) {
+        return match (*method == Method::Get, id.is_empty()) {
+            (_, true) => Route::NotFound,
+            (true, false) => Route::Status(id.to_string()),
+            (false, false) => Route::MethodNotAllowed,
+        };
+    }
     match path {
         "/state" | "/health" if *method != Method::Get => Route::MethodNotAllowed,
         "/state" => Route::State,
         "/health" => Route::Health,
+        ACTION_PATH if *method == Method::Post => Route::Submit,
+        ACTION_PATH => Route::MethodNotAllowed,
         _ => Route::NotFound,
     }
 }
@@ -73,16 +103,44 @@ fn json_header() -> Header {
         .expect("constant header is well-formed")
 }
 
+/// Everything a probe needs to answer a request.
+///
+/// A struct rather than four parameters because `control` is the one
+/// that must be readable at a glance in every call site: it is the
+/// difference between a machine that can be looked at and a machine
+/// that can be told what to do.
+pub struct Serving<'a> {
+    /// The projects this machine holds.
+    pub registry: &'a Registry,
+    /// How this machine's adapters are built.
+    pub config: &'a AdapterConfig,
+    /// How this machine names itself.
+    pub peer: &'a str,
+    /// The control surface — `None` unless control was asked for, and
+    /// then no request can cause this machine to act.
+    pub control: Option<&'a Control>,
+}
+
+/// What a probe says when asked to act and control is off.
+///
+/// **`403`, not `404`.** A client that got `404` could not tell "control
+/// is off here" from "this probe is too old to have control at all", and
+/// those call for different things from an operator.
+fn control_is_off() -> Response<std::io::Cursor<Vec<u8>>> {
+    Response::from_string("control is not enabled on this probe; start it with --allow-control")
+        .with_status_code(403)
+}
+
 /// Answers one request.
-fn answer(
-    request: Request,
-    registry: &Registry,
-    config: &AdapterConfig,
-    peer: &str,
-) -> std::io::Result<()> {
+fn answer(mut request: Request, serving: &Serving) -> std::io::Result<()> {
     match route(request.method(), request.url()) {
         Route::State => {
-            let envelope = envelope(registry, config, peer, SystemTime::now());
+            let envelope = envelope(
+                serving.registry,
+                serving.config,
+                serving.peer,
+                SystemTime::now(),
+            );
             match serde_json::to_string(&envelope) {
                 Ok(body) => request.respond(Response::from_string(body).with_header(json_header())),
                 // Serialization failing is this crate's bug, and a 500
@@ -95,6 +153,61 @@ fn answer(
             }
         }
         Route::Health => request.respond(Response::from_string("ok")),
+        Route::Submit => {
+            // Before the body is touched: a probe that does not do
+            // control does not parse actions either.
+            let Some(control) = serving.control else {
+                return request.respond(control_is_off());
+            };
+            let mut body = String::new();
+            if let Err(e) = request.as_reader().take(MAX_BODY).read_to_string(&mut body) {
+                return request.respond(
+                    Response::from_string(format!("could not read the request: {e}"))
+                        .with_status_code(400),
+                );
+            }
+            match serde_json::from_str::<ActionRequest>(&body) {
+                // A body we cannot read is a `400`: this machine read it
+                // and declined, so the caller knows nothing ran.
+                Err(e) => request.respond(
+                    Response::from_string(format!("could not read the action: {e}"))
+                        .with_status_code(400),
+                ),
+                Ok(action) => {
+                    let reply = control.submit(action);
+                    // `202` for the one that will still happen, `200`
+                    // for the one that is already over.
+                    let status = match reply {
+                        SubmitReply::Accepted { .. } => 202,
+                        SubmitReply::Refused { .. } => 200,
+                    };
+                    match serde_json::to_string(&reply) {
+                        Ok(body) => request.respond(
+                            Response::from_string(body)
+                                .with_header(json_header())
+                                .with_status_code(status),
+                        ),
+                        Err(e) => request.respond(
+                            Response::from_string(format!("could not serialize the reply: {e}"))
+                                .with_status_code(500),
+                        ),
+                    }
+                }
+            }
+        }
+        Route::Status(id) => {
+            let Some(control) = serving.control else {
+                return request.respond(control_is_off());
+            };
+            let reply = control.status(&ActionId::new(id));
+            match serde_json::to_string(&reply) {
+                Ok(body) => request.respond(Response::from_string(body).with_header(json_header())),
+                Err(e) => request.respond(
+                    Response::from_string(format!("could not serialize the reply: {e}"))
+                        .with_status_code(500),
+                ),
+            }
+        }
         Route::NotFound => {
             request.respond(Response::from_string("not found").with_status_code(404))
         }
@@ -145,11 +258,11 @@ impl Probe {
     }
 
     /// Serves until the listener dies.
-    pub fn serve(&self, registry: &Registry, config: &AdapterConfig, peer: &str) {
+    pub fn serve(&self, serving: &Serving) {
         for request in self.server.incoming_requests() {
             // One bad connection is not a reason to stop serving the
             // other two machines.
-            let _ = answer(request, registry, config, peer);
+            let _ = answer(request, serving);
         }
     }
 }
@@ -176,12 +289,38 @@ mod tests {
         assert_eq!(route(&Method::Get, "/admin"), Route::NotFound);
     }
 
-    /// Arc 1 is read-only. A POST that fell through to `/state` would be
-    /// a control surface nobody specified.
+    /// The read routes stay read-only now that a write route exists
+    /// beside them. A POST that fell through to `/state` would be a
+    /// second control surface, and one nobody specified.
     #[test]
     fn a_known_path_asked_for_the_wrong_way_is_refused_rather_than_served() {
         assert_eq!(route(&Method::Post, "/state"), Route::MethodNotAllowed);
         assert_eq!(route(&Method::Delete, "/health"), Route::MethodNotAllowed);
+        assert_eq!(route(&Method::Get, "/action"), Route::MethodNotAllowed);
+        assert_eq!(
+            route(&Method::Post, "/action/desktop-1-1"),
+            Route::MethodNotAllowed
+        );
+    }
+
+    #[test]
+    fn the_control_routes_resolve() {
+        assert_eq!(route(&Method::Post, "/action"), Route::Submit);
+        assert_eq!(
+            route(&Method::Get, "/action/desktop-1-1"),
+            Route::Status("desktop-1-1".into())
+        );
+    }
+
+    /// `/action/` names no action, and answering it as a status query
+    /// for the empty id would invent one.
+    #[test]
+    fn an_action_path_with_no_id_is_not_a_status_query() {
+        // Normalizes to `/action`, which a GET may not have.
+        assert_eq!(route(&Method::Get, "/action/"), Route::MethodNotAllowed);
+        assert_eq!(route(&Method::Post, "/action/"), Route::Submit);
+        // An empty id is not an id.
+        assert_eq!(route(&Method::Get, "/action//"), Route::NotFound);
     }
 
     #[test]

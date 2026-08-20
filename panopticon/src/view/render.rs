@@ -76,10 +76,15 @@ pub struct Frame<'a> {
     /// Which row of the detail pane is selected.
     pub detail_selected: usize,
     /// What this session has attempted, oldest first, as
-    /// `(summary, result, ok)`. Rendered strings rather than actions:
+    /// `(summary, result, mark)`. Rendered strings rather than actions:
     /// the render path is not allowed to name an action, and does not
     /// need to.
-    pub log: &'a [(String, String, bool)],
+    ///
+    /// The mark arrives already chosen rather than as a `bool` the
+    /// renderer turns into one, because there are four states and the
+    /// two that are neither success nor failure — accepted-and-running,
+    /// and answer-lost — are the ones a boolean would have to lie about.
+    pub log: &'a [(String, String, &'static str)],
     /// The question on screen, when one is being asked. Presentation
     /// only — the answer is handled in `control`, not here.
     pub question: Option<&'a str>,
@@ -288,10 +293,7 @@ fn log_lines(frame: &Frame<'_>) -> Vec<String> {
     frame
         .log
         .iter()
-        .map(|(summary, result, ok)| {
-            let mark = if *ok { "ok" } else { "!!" };
-            format!("{mark}  {summary}  —  {result}")
-        })
+        .map(|(summary, result, mark)| format!("{mark}  {summary}  —  {result}"))
         .collect()
 }
 
