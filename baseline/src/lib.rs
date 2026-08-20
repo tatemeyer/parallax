@@ -9,5 +9,6 @@
 #![warn(missing_docs)]
 
 pub mod autonomy;
+pub mod freshness;
 pub mod manifest;
 pub mod validate;
