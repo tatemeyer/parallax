@@ -9,6 +9,7 @@
 use super::AdapterError;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 /// What a request does. Reads are conditional; writes never are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -129,11 +130,35 @@ pub struct UreqTransport {
     token: Option<String>,
 }
 
+/// How long to wait for a peer or an API to answer.
+///
+/// **Bounded on purpose, and the bound matters more than the numbers.**
+/// A machine that refuses a connection fails instantly; one that is
+/// asleep behind a tailnet usually does not refuse at all, it simply
+/// stops answering — and with no timeout that read waits on the
+/// operating system, which is to say indefinitely. Peers are fetched one
+/// after another on the refresh thread, so a single blackholed machine
+/// would stall every peer behind it and never itself be reported
+/// unavailable, which is the one thing the freshness model must never
+/// let happen.
+///
+/// Sized against [`crate::freshness::DEFAULT_POLL_INTERVAL`]: connect
+/// plus read is 15 seconds, so two dead peers still finish inside a
+/// 30-second cycle rather than falling permanently behind it.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+/// See [`CONNECT_TIMEOUT`]. A probe's own scan is local and fast; this is
+/// generous for it and still bounded.
+const READ_TIMEOUT: Duration = Duration::from_secs(10);
+
 impl UreqTransport {
     /// An unauthenticated transport.
     pub fn new() -> Self {
         Self {
-            agent: ureq::AgentBuilder::new().build(),
+            agent: ureq::AgentBuilder::new()
+                .timeout_connect(CONNECT_TIMEOUT)
+                .timeout_read(READ_TIMEOUT)
+                .timeout_write(READ_TIMEOUT)
+                .build(),
             token: None,
         }
     }

@@ -323,6 +323,25 @@ answered, the failure named `laptop` and carried `connection refused`,
 and nothing else lost a row. A peer answering `<html>gateway timeout` and
 one speaking `parallax/v2` each fail by name.
 
+**That verification was incomplete, and the gap was real.** Every one of
+those cases fails *immediately*, which is what a refused connection looks
+like. The failure that actually matters is a machine that accepts and
+then says nothing — a laptop asleep mid-conversation, a tailnet route
+that stopped forwarding — and `UreqTransport` built its agent with no
+timeouts at all, so that read was bounded only by the operating system.
+
+Because peers are fetched one after another on the refresh thread, one
+blackholed machine would have stalled every peer behind it *and* never
+been reported unavailable itself, since the fetch it was stuck inside is
+the thing that reports it. Precisely the failure the freshness model
+exists to prevent, arriving through the one path it did not cover.
+
+Fixed with connect and read timeouts sized against the poll interval —
+15 seconds total, so two dead peers still finish inside a 30-second
+cycle. `baseline/tests/peer_timeouts.rs` holds a socket open and says
+nothing; the suite takes 10.12 seconds, which is the read timeout doing
+the bounding rather than a connection failing for some other reason.
+
 #### Task 14: Recorded peers in fixture mode
 
 - [x] `fixtures/peers/<name>.json`, one recorded envelope per machine, served by a `FixtureTransport`. The URL is synthesized from the file name — a fixture that could reach a network is not a fixture.
