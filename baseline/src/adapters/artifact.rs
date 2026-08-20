@@ -207,6 +207,81 @@ impl ArtifactAdapter for CaptureArtifactAdapter {
     }
 }
 
+use std::collections::BTreeMap;
+
+/// Parses a JSONL metrics feed into named scalar series.
+///
+/// One record per line, each a JSON object. Numeric fields become
+/// series points in record order; non-numeric fields and unparseable
+/// lines are skipped, never coerced and never fatal — a real producer
+/// emits ragged records and string annotations, and losing the whole
+/// file over one of them would be the wrong trade.
+pub fn parse_metrics(text: &str) -> Vec<Series> {
+    let mut series: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(serde_json::Value::Object(record)) = serde_json::from_str(line) else {
+            continue;
+        };
+        for (key, value) in record {
+            if let Some(number) = value.as_f64() {
+                series.entry(key).or_default().push(number);
+            }
+        }
+    }
+    series
+        .into_iter()
+        .map(|(name, points)| Series { name, points })
+        .collect()
+}
+
+/// Reports JSONL scalar series. Also selected by a manifest writing
+/// `adapter: jsonl`.
+pub struct MetricsArtifactAdapter {
+    watch: String,
+}
+
+impl MetricsArtifactAdapter {
+    /// An adapter scanning `watch`, relative to the project root.
+    pub fn new(watch: impl Into<String>) -> Self {
+        Self {
+            watch: watch.into(),
+        }
+    }
+}
+
+impl ArtifactAdapter for MetricsArtifactAdapter {
+    fn source_name(&self) -> String {
+        "artifact:metrics".into()
+    }
+
+    fn scan(
+        &mut self,
+        ctx: &ProjectContext,
+        now: SystemTime,
+    ) -> Result<Observed<Vec<Artifact>>, AdapterError> {
+        let mut artifacts = Vec::new();
+        for path in scan_glob(&ctx.root, &self.watch)? {
+            if !path.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path)?;
+            artifacts.push(Artifact {
+                modified: modified_at(&path),
+                path,
+                kind: ArtifactKind::Metrics,
+                detail: ArtifactDetail::Metrics {
+                    series: parse_metrics(&text),
+                },
+            });
+        }
+        Ok(Observed::watched(artifacts, now))
+    }
+}
+
 #[cfg(test)]
 mod scan_tests {
     use super::*;
