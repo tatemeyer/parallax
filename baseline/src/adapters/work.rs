@@ -5,6 +5,11 @@ use super::{AdapterError, ProjectContext};
 use crate::freshness::Observed;
 use std::time::SystemTime;
 
+use super::http::{HttpRequest, HttpResponse, HttpTransport};
+use crate::freshness::DEFAULT_POLL_INTERVAL;
+use std::collections::HashMap;
+use std::time::Duration;
+
 /// Whether a work item is an issue or a pull request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkKind {
@@ -97,4 +102,220 @@ pub trait WorkAdapter {
         ctx: &ProjectContext,
         now: SystemTime,
     ) -> Result<Observed<WorkSnapshot>, AdapterError>;
+}
+
+/// The issues endpoint for a repository. GitHub returns pull requests
+/// here too; they carry a `pull_request` key and are skipped, because
+/// `pulls_url` returns them with their head SHA.
+pub fn issues_url(repo: &str) -> String {
+    format!("https://api.github.com/repos/{repo}/issues?state=all&per_page=100")
+}
+
+/// The pull requests endpoint for a repository.
+pub fn pulls_url(repo: &str) -> String {
+    format!("https://api.github.com/repos/{repo}/pulls?state=all&per_page=100")
+}
+
+/// The check-runs endpoint for one commit.
+pub fn check_runs_url(repo: &str, sha: &str) -> String {
+    format!("https://api.github.com/repos/{repo}/commits/{sha}/check-runs")
+}
+
+/// Reads issues, pull requests, and check runs from GitHub, polling
+/// with ETag-conditional requests so an unchanged feed costs no rate
+/// limit.
+pub struct GithubWorkAdapter<T: HttpTransport> {
+    transport: T,
+    interval: Duration,
+    etags: HashMap<String, String>,
+    cached: Option<WorkSnapshot>,
+}
+
+impl<T: HttpTransport> GithubWorkAdapter<T> {
+    /// A GitHub adapter polling at `DEFAULT_POLL_INTERVAL`.
+    pub fn new(transport: T) -> Self {
+        Self {
+            transport,
+            interval: DEFAULT_POLL_INTERVAL,
+            etags: HashMap::new(),
+            cached: None,
+        }
+    }
+
+    /// Overrides the poll interval.
+    pub fn with_interval(mut self, interval: Duration) -> Self {
+        self.interval = interval;
+        self
+    }
+
+    /// The transport, for asserting what was requested.
+    pub fn transport(&self) -> &T {
+        &self.transport
+    }
+
+    /// Fetches a URL conditionally. `Ok(None)` means "not modified".
+    fn fetch(&mut self, url: &str) -> Result<Option<String>, AdapterError> {
+        let request = HttpRequest {
+            url: url.to_string(),
+            etag: self.etags.get(url).cloned(),
+        };
+        match self.transport.get(&request)? {
+            HttpResponse::NotModified => Ok(None),
+            HttpResponse::Ok { body, etag } => {
+                match etag {
+                    Some(e) => self.etags.insert(url.to_string(), e),
+                    None => self.etags.remove(url),
+                };
+                Ok(Some(body))
+            }
+        }
+    }
+
+    /// Re-fetches a URL ignoring the stored ETag. Needed when one
+    /// endpoint changed and another did not: the snapshot is rebuilt as
+    /// a whole, so a `304` on one half still needs that half's body.
+    fn refetch_unconditionally(&mut self, url: &str) -> Result<String, AdapterError> {
+        match self.transport.get(&HttpRequest {
+            url: url.to_string(),
+            etag: None,
+        })? {
+            HttpResponse::Ok { body, etag } => {
+                if let Some(e) = etag {
+                    self.etags.insert(url.to_string(), e);
+                }
+                Ok(body)
+            }
+            HttpResponse::NotModified => Err(AdapterError::Parse(
+                "server returned 304 to an unconditional request".into(),
+            )),
+        }
+    }
+}
+
+fn as_labels(value: &serde_json::Value) -> Vec<String> {
+    value["labels"]
+        .as_array()
+        .map(|xs| {
+            xs.iter()
+                .filter_map(|l| l["name"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn str_field(value: &serde_json::Value, key: &str) -> String {
+    value[key].as_str().unwrap_or_default().to_string()
+}
+
+fn parse_state(value: &serde_json::Value) -> WorkState {
+    if value["draft"].as_bool().unwrap_or(false) {
+        return WorkState::Draft;
+    }
+    match value["state"].as_str() {
+        Some("closed") if value["merged_at"].is_string() => WorkState::Merged,
+        Some("closed") => WorkState::Closed,
+        _ => WorkState::Open,
+    }
+}
+
+fn parse_item(
+    value: &serde_json::Value,
+    kind: WorkKind,
+    checks: ChecksSummary,
+) -> Option<WorkItem> {
+    Some(WorkItem {
+        number: value["number"].as_u64()?,
+        title: str_field(value, "title"),
+        kind,
+        state: parse_state(value),
+        labels: as_labels(value),
+        checks,
+        url: str_field(value, "html_url"),
+        updated_at: str_field(value, "updated_at"),
+    })
+}
+
+fn parse_checks(body: &str) -> Result<ChecksSummary, AdapterError> {
+    let value: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| AdapterError::Parse(e.to_string()))?;
+    let mut summary = ChecksSummary::none();
+    for run in value["check_runs"].as_array().unwrap_or(&Vec::new()) {
+        match (run["status"].as_str(), run["conclusion"].as_str()) {
+            (Some("completed"), Some("success")) => summary.passed += 1,
+            (Some("completed"), _) => summary.failed += 1,
+            _ => summary.pending += 1,
+        }
+    }
+    Ok(summary)
+}
+
+impl<T: HttpTransport> WorkAdapter for GithubWorkAdapter<T> {
+    fn source_name(&self) -> String {
+        "work:github".into()
+    }
+
+    fn poll(
+        &mut self,
+        ctx: &ProjectContext,
+        now: SystemTime,
+    ) -> Result<Observed<WorkSnapshot>, AdapterError> {
+        let repo = ctx.repo.clone().ok_or_else(|| {
+            AdapterError::Unsupported(format!(
+                "project `{}` has no work.repo, so there is nothing to poll",
+                ctx.name
+            ))
+        })?;
+
+        let issues_body = self.fetch(&issues_url(&repo))?;
+        let pulls_body = self.fetch(&pulls_url(&repo))?;
+
+        if issues_body.is_none() && pulls_body.is_none() {
+            if let Some(cached) = self.cached.clone() {
+                return Ok(Observed::polled(cached, now, self.interval));
+            }
+        }
+
+        let mut items = Vec::new();
+
+        let issues_json = match issues_body {
+            Some(body) => body,
+            None => self.refetch_unconditionally(&issues_url(&repo))?,
+        };
+        let issues: serde_json::Value =
+            serde_json::from_str(&issues_json).map_err(|e| AdapterError::Parse(e.to_string()))?;
+        for value in issues.as_array().unwrap_or(&Vec::new()) {
+            // GitHub returns pull requests from the issues endpoint too;
+            // `pulls_url` covers them with their head SHA, so skip them
+            // here rather than reporting each one twice.
+            if value.get("pull_request").is_some() {
+                continue;
+            }
+            if let Some(item) = parse_item(value, WorkKind::Issue, ChecksSummary::none()) {
+                items.push(item);
+            }
+        }
+
+        let pulls_json = match pulls_body {
+            Some(body) => body,
+            None => self.refetch_unconditionally(&pulls_url(&repo))?,
+        };
+        let pulls: serde_json::Value =
+            serde_json::from_str(&pulls_json).map_err(|e| AdapterError::Parse(e.to_string()))?;
+        for value in pulls.as_array().unwrap_or(&Vec::new()) {
+            let checks = match value["head"]["sha"].as_str() {
+                Some(sha) => match self.fetch(&check_runs_url(&repo, sha))? {
+                    Some(body) => parse_checks(&body)?,
+                    None => ChecksSummary::none(),
+                },
+                None => ChecksSummary::none(),
+            };
+            if let Some(item) = parse_item(value, WorkKind::PullRequest, checks) {
+                items.push(item);
+            }
+        }
+
+        let snapshot = WorkSnapshot { items };
+        self.cached = Some(snapshot.clone());
+        Ok(Observed::polled(snapshot, now, self.interval))
+    }
 }
