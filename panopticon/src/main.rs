@@ -2,18 +2,24 @@
 //!
 //! This is the one place a wall clock is sampled outside fixture mode,
 //! the one place that touches a terminal, and the one place that decides
-//! whether this run can act at all: fixture mode builds no executors, so
-//! a demo refuses every action out loud rather than merging something
-//! from recorded state.
+//! what this run may act on.
+//!
+//! **The two halves of that decision are not the same question.** A
+//! *local* action shells out on this machine, so fixture mode builds no
+//! local executors at all and a demo refuses out loud rather than
+//! merging something from recorded state. A *remote* action is an HTTP
+//! request, and in fixture mode it goes through a transport that holds a
+//! map and owns no socket — so a recorded cockpit can be asked, can
+//! answer from the recording, and still cannot reach a machine.
 
 use panopticon::app::Panopticon;
 use panopticon::control::{Control, Destination};
 use panopticon::courier::{BoxedSubmitter, Courier};
 use panopticon::fixtures;
 use panopticon::refresh::{BoxedPeer, Clock, Refresher};
-use parallax_baseline::actions::RemoteExecutor;
+use parallax_baseline::actions::{RemoteExecutor, ACTION_PATH};
 use parallax_baseline::adapters::factory::{executor_for, from_manifest, AdapterConfig};
-use parallax_baseline::adapters::http::{HttpTransport, UreqTransport};
+use parallax_baseline::adapters::http::{FixtureTransport, HttpTransport, Method, UreqTransport};
 use parallax_baseline::freshness::DEFAULT_POLL_INTERVAL;
 use parallax_baseline::peers::PeerClient;
 use parallax_baseline::registry::Registry;
@@ -53,8 +59,10 @@ KEYS:
 
 An action that cannot be undone asks before it happens, and asks in a
 way that cannot be answered by reflex: a merge wants the pull request
-number typed, not a keystroke. Fixture mode builds no executors, so
-every action there is refused and says why.
+number typed, not a keystroke. Fixture mode builds no local executors,
+so an action on this machine is refused there and says why; an action
+offered to a recorded machine answers from the recording, and reaches
+no machine at all.
 
 The refresh cycle never runs a build. Checks that do — `cargo test` and
 friends — run only when you ask, because a cadence is the right shape
@@ -116,7 +124,13 @@ fn main() -> ExitCode {
         poll_interval: DEFAULT_POLL_INTERVAL,
         github_token: token,
     };
-    let (projects, peers, clock, live) = match load(source, &config) {
+    let Loaded {
+        projects,
+        peers,
+        submitters,
+        clock,
+        live,
+    } = match load(source, &config) {
         Ok(loaded) => loaded,
         Err(problem) => return fail(&problem),
     };
@@ -124,18 +138,13 @@ fn main() -> ExitCode {
     // A peer is named by its registry entry, never by what it answers
     // with, so the rail can show a machine it has not reached yet.
     let peer_names: Vec<String> = peers.iter().map(|p| p.name().to_string()).collect();
-    let peer_urls: Vec<(String, String)> = peers
-        .iter()
-        .map(|p| (p.name().to_string(), p.url().to_string()))
-        .collect();
 
     let validated: Vec<Validated> = projects.iter().map(|(v, _)| v.clone()).collect();
     let control = Control::new(control_for(&validated, &config, live));
-    // Built before the peers move into the refresh thread, and from the
-    // same list, so a machine this cockpit watches is a machine it can
-    // at least *offer* an action to. Whether that machine accepts is the
-    // machine's own decision, answered at the point of asking.
-    let courier = courier_for(&peer_urls, live);
+    // Built before the peers move into the refresh thread. In live mode
+    // it carries to every machine this cockpit watches; in fixture mode,
+    // to whichever recorded one declared a control surface.
+    let courier = Courier::spawn(submitters);
     let refresher = Refresher::spawn_with_peers(projects, peers, clock);
     let mut app = Panopticon::new(&validated, refresher, clock, DEFAULT_POLL_INTERVAL)
         .with_control(control)
@@ -173,39 +182,39 @@ fn control_for(projects: &[Validated], config: &AdapterConfig, live: bool) -> Ve
         .collect()
 }
 
-/// A courier over every machine this cockpit watches.
+/// A submitter for one recorded machine.
 ///
-/// **Every peer, not a configured subset.** Whether a machine will
-/// accept an action is that machine's decision, made by the probe on it
-/// and answered at the point of asking; a second list here would be a
-/// second place for that to be wrong, and the one that cannot see the
-/// flag. `live` is false in fixture mode, and then it carries nothing —
-/// a recorded cockpit that could act on a real Pi is a demo with a
-/// loaded weapon in it.
-fn courier_for(peers: &[(String, String)], live: bool) -> Courier {
-    if !live {
-        return Courier::idle();
+/// **The real `RemoteExecutor`, not a double.** Id generation, the JSON,
+/// the reading of a 4xx as a refusal and everything else as unknown —
+/// all of it is the shipping code, and only the bytes are recorded. A
+/// hand-written stand-in would be a second implementation of the thing
+/// the scenarios exist to photograph, and a photograph of a second
+/// implementation proves nothing about the first.
+///
+/// It cannot reach the machine it names. `FixtureTransport` holds a map
+/// and owns no socket, and the URL was synthesized from a file name that
+/// `fixtures` refused to let resolve.
+fn recorded_submitter(recorded: &fixtures::RecordedControl) -> BoxedSubmitter {
+    let mut transport = FixtureTransport::new();
+    transport.insert_write(
+        Method::Post,
+        format!("{}{ACTION_PATH}", recorded.url),
+        recorded.submit.to_string(),
+    );
+    for (id, reply) in &recorded.status {
+        transport.insert(
+            format!("{}{ACTION_PATH}/{id}", recorded.url),
+            reply.to_string(),
+            None,
+        );
     }
-    // Distinguishes this run of this cockpit from the last one, so a
-    // restart cannot reuse ids a probe already has answers filed under.
-    let run = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let client = this_machine();
-    let submitters = peers
-        .iter()
-        .map(|(name, url)| {
-            Box::new(RemoteExecutor::new(
-                UreqTransport::new(),
-                url,
-                name,
-                client.clone(),
-                run,
-            )) as BoxedSubmitter
-        })
-        .collect();
-    Courier::spawn(submitters)
+    Box::new(RemoteExecutor::new(
+        transport,
+        &recorded.url,
+        &recorded.peer,
+        fixtures::FIXTURE_CLIENT,
+        fixtures::FIXTURE_RUN,
+    ))
 }
 
 /// How this machine names itself in an action it sends.
@@ -225,15 +234,33 @@ fn this_machine() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Turns the chosen source into projects and a clock.
-/// What a source resolves to: the projects and their adapters, the
-/// clock to read, and whether this run is allowed to act.
-type Loaded = (
-    Vec<(Validated, ProjectAdapters)>,
-    Vec<BoxedPeer>,
-    Clock,
-    bool,
-);
+/// What a source resolves to.
+///
+/// A struct rather than a tuple because `live` is the field that has to
+/// be readable at a glance: it is what decides whether this cockpit can
+/// run a command on the machine it is displayed on.
+struct Loaded {
+    /// The projects on this disk, with their adapters.
+    projects: Vec<(Validated, ProjectAdapters)>,
+    /// The machines this cockpit watches.
+    peers: Vec<BoxedPeer>,
+    /// Which machines it may also *ask*, and how.
+    ///
+    /// Built here rather than in `courier_for` because fixture mode
+    /// records its submitters alongside the peers they belong to, and
+    /// live mode builds them from URLs. The two sources differ; what
+    /// the courier receives does not.
+    submitters: Vec<BoxedSubmitter>,
+    /// The clock to read.
+    clock: Clock,
+    /// Whether a *local* action may run a command on this machine.
+    ///
+    /// False in fixture mode, and that is not the same question as
+    /// whether a remote one may be submitted: a recorded submission goes
+    /// through a transport with no socket in it, so it can be offered
+    /// without any machine being reachable.
+    live: bool,
+}
 
 /// Returns the projects, the clock, and whether this run may act.
 fn load(source: Source, config: &AdapterConfig) -> Result<Loaded, String> {
@@ -241,8 +268,17 @@ fn load(source: Source, config: &AdapterConfig) -> Result<Loaded, String> {
         Source::Fixtures(dir) => {
             let set = fixtures::load(&dir)?;
             // The one mode with no wall clock in it at all, and the one
-            // that may not act: recorded state, real consequences.
-            return Ok((set.projects, set.peers, Clock::Frozen(set.now), false));
+            // whose *local* actions may not run: recorded state, real
+            // consequences. Its submitters are another matter — they
+            // reach a `HashMap`, not a machine.
+            let submitters = set.control.iter().map(recorded_submitter).collect();
+            return Ok(Loaded {
+                projects: set.projects,
+                peers: set.peers,
+                submitters,
+                clock: Clock::Frozen(set.now),
+                live: false,
+            });
         }
         Source::ProjectsRoot(dir) => Registry::scan(&dir),
         Source::RegistryFile(file) => Registry::from_file(&file).map_err(|e| e.to_string())?,
@@ -265,7 +301,7 @@ fn load(source: Source, config: &AdapterConfig) -> Result<Loaded, String> {
         })
         .collect();
 
-    let peers = registry
+    let peers: Vec<BoxedPeer> = registry
         .peers()
         .iter()
         .map(|peer| {
@@ -274,7 +310,38 @@ fn load(source: Source, config: &AdapterConfig) -> Result<Loaded, String> {
         })
         .collect();
 
-    Ok((projects, peers, Clock::System, true))
+    // Distinguishes this run of this cockpit from the last one, so a
+    // restart cannot reuse ids a probe already has answers filed under.
+    let run = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let client = this_machine();
+    // **Every peer, not a configured subset.** Whether a machine will
+    // accept an action is that machine's decision, made by the probe on
+    // it and answered at the point of asking; a second list here would
+    // be a second place for that to be wrong, and the one that cannot
+    // see the flag.
+    let submitters = peers
+        .iter()
+        .map(|p| {
+            Box::new(RemoteExecutor::new(
+                UreqTransport::new(),
+                p.url(),
+                p.name(),
+                client.clone(),
+                run,
+            )) as BoxedSubmitter
+        })
+        .collect();
+
+    Ok(Loaded {
+        projects,
+        peers,
+        submitters,
+        clock: Clock::System,
+        live: true,
+    })
 }
 
 /// An environment variable, when it is set to something.
@@ -285,4 +352,84 @@ fn non_empty(name: &str) -> Option<String> {
 fn fail(problem: &str) -> ExitCode {
     eprintln!("panopticon: {problem}\n\n{USAGE}");
     ExitCode::FAILURE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parallax_baseline::actions::{Action, Submitted};
+
+    fn fixture_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures")
+    }
+
+    /// **The guarantee this arc is most likely to have broken.** Giving
+    /// fixture mode a submitter says nothing about local actions, and a
+    /// fixture cockpit that could run a command on the machine it is
+    /// being demonstrated on is the thing the whole mode exists to
+    /// prevent.
+    #[test]
+    fn fixture_mode_still_sends_every_local_action_nowhere() {
+        let set = fixtures::load(&fixture_dir()).expect("the fixture set loads");
+        let validated: Vec<Validated> = set.projects.iter().map(|(v, _)| v.clone()).collect();
+        assert!(!validated.is_empty(), "the fixture set lost its projects");
+
+        let destinations = control_for(&validated, &AdapterConfig::default(), false);
+        assert_eq!(destinations.len(), validated.len());
+        for destination in &destinations {
+            assert!(
+                matches!(destination, Destination::Nowhere(_)),
+                "a fixture-mode project got somewhere to send a local action"
+            );
+        }
+    }
+
+    /// A recorded submitter is a `RemoteExecutor` over a transport with
+    /// no socket in it. It names the machine it would act on, which is
+    /// what puts that machine's name in the confirmation prompt.
+    #[test]
+    fn a_recorded_submitter_names_the_machine_it_would_act_on() {
+        let set = fixtures::load(&fixture_dir()).unwrap();
+        let submitter = recorded_submitter(&set.control[0]);
+        assert_eq!(submitter.peer(), "pi5");
+    }
+
+    /// The behaviour the `pi5` recording exists to photograph: a reply
+    /// this version cannot parse leaves the action's fate **unknown**,
+    /// never refused.
+    ///
+    /// The distinction is the reason the control arc exists. Refused
+    /// means nothing happened; unknown means something may well have
+    /// happened and nobody can say — and an operator told "refused" when
+    /// the truth is "unknown" retries a merge that already went through.
+    #[test]
+    fn a_reply_this_version_cannot_read_leaves_the_action_unknown() {
+        let set = fixtures::load(&fixture_dir()).unwrap();
+        let mut submitter = recorded_submitter(&set.control[0]);
+
+        let outcome = submitter.submit(
+            &Action::MergePullRequest {
+                project: "sesh".into(),
+                number: 8,
+            },
+            None,
+        );
+
+        match outcome {
+            Submitted::Unknown { id, reason } => {
+                assert_eq!(
+                    id.as_str(),
+                    "fixture-0-1",
+                    "ids are pinned so a recording can name them"
+                );
+                assert!(
+                    reason.contains("pi5"),
+                    "an unknown has to name the machine: {reason}"
+                );
+            }
+            other => panic!(
+                "an unreadable reply became {other:?}, which would tell an operator something false"
+            ),
+        }
+    }
 }

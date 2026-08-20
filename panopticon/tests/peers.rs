@@ -174,6 +174,32 @@ fn a_peer_answering_with_nonsense_fails_with_a_reason() {
     );
 }
 
+/// **Every** recorded machine answers, not just the first one.
+///
+/// A fixture peer whose envelope is malformed does not fail loudly — it
+/// renders as a machine that did not answer, which is a real and
+/// expected state, so the screen looks plausible and the fixture is
+/// silently broken. Asserted here because that is exactly how the
+/// second recorded machine was added with a bad `source` shape.
+#[test]
+fn every_recorded_machine_in_the_shipped_set_answers() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
+    let mut set = panopticon::fixtures::load(&dir).expect("the fixture set loads");
+    let now = set.now;
+    assert!(!set.peers.is_empty(), "the fixture set lost its peers");
+
+    for peer in &mut set.peers {
+        let name = peer.name().to_string();
+        let projects = peer
+            .fetch(now)
+            .unwrap_or_else(|e| panic!("recorded machine `{name}` did not answer: {}", e.reason));
+        assert!(
+            !projects.is_empty(),
+            "recorded machine `{name}` answered with no projects"
+        );
+    }
+}
+
 /// The shipped fixture set carries a recorded machine, and it renders
 /// the same way twice. Without this, remote hosts would be the one part
 /// of the cockpit Plumb could never judge — a NO-GO on a screen holding
@@ -183,19 +209,23 @@ fn a_peer_answering_with_nonsense_fails_with_a_reason() {
 fn the_shipped_fixture_set_holds_a_peer_that_loads_identically_twice() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
 
+    // Peers are sorted by file name, so `pi5` precedes `tates-laptop`
+    // and a row's position is a property of the directory rather than of
+    // whichever order the filesystem happened to hand back.
     let load = || {
         let mut set = panopticon::fixtures::load(&dir).expect("the fixture set loads");
-        assert_eq!(set.peers.len(), 1, "the fixture set lost its peer");
+        assert_eq!(set.peers.len(), 2, "the fixture set lost a peer");
         let now = set.now;
-        let projects = set.peers[0].fetch(now).expect("the recorded peer answers");
-        (set.peers[0].name().to_string(), projects, now)
+        let names: Vec<String> = set.peers.iter().map(|p| p.name().to_string()).collect();
+        let projects = set.peers[1].fetch(now).expect("the recorded peer answers");
+        (names, projects, now)
     };
 
-    let (name_a, first, now) = load();
-    let (name_b, second, _) = load();
+    let (names_a, first, now) = load();
+    let (names_b, second, _) = load();
 
-    assert_eq!(name_a, "tates-laptop");
-    assert_eq!(name_b, name_a);
+    assert_eq!(names_a, ["pi5", "tates-laptop"]);
+    assert_eq!(names_b, names_a);
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].qualified_name(), "ttui@tates-laptop");
 
