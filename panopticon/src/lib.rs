@@ -9,6 +9,12 @@
 pub mod adapters;
 /// The interactive `App` -- the only terminal-facing code in this crate.
 pub mod app;
+/// The Cloister Bell: the degraded-source banner overlay.
+pub mod bell;
+/// The Detail screen: a pure renderer for one project's full state.
+pub mod detail;
+/// Small display-formatting helpers shared by every screen.
+mod fmt;
 /// Discovers and validates `manifests/*.yaml`.
 pub mod load;
 /// The Overview screen: a pure renderer plus its cell logic.

@@ -3,12 +3,13 @@
 //! as Baseline's adapters test without a network -- `run` is the only
 //! code in this crate that touches a terminal.
 
+use crate::fmt::{family_degraded, format_duration, ALERT, DASH};
 use parallax_baseline::adapters::verification::VerificationOutcome;
 use parallax_baseline::autonomy::Merge;
 use parallax_baseline::freshness::Freshness;
 use parallax_baseline::state::{PlatformState, ProjectState};
 use std::collections::BTreeMap;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use ttui::buffer::Buffer;
 use ttui::layout::{Constraint, Rect};
 use ttui::widgets::table::Table;
@@ -34,20 +35,6 @@ const WIDTHS: [Constraint; 7] = [
     Constraint::Fixed(12), // AUTONOMY
     Constraint::Fill(1),   // OLDEST SOURCE -- takes the rest
 ];
-
-const DASH: &str = "\u{2014}"; // — : not declared
-const ALERT: &str = "!"; // fetch failed
-
-/// Whether a `Degradation` belonging to `family_prefix` (Baseline names
-/// sources `"<family>:<detail>"`, e.g. `work:github`) exists for this
-/// project -- what distinguishes "never declared" from "declared but
-/// this cycle's fetch failed" for a family whose field is absent.
-fn family_degraded(state: &ProjectState, family_prefix: &str) -> bool {
-    state
-        .degradations
-        .iter()
-        .any(|d| d.source.starts_with(family_prefix))
-}
 
 /// The hard requirement's three states, for a family represented by an
 /// absent value: `—` when nothing was ever declared for it, `!` when it
@@ -137,22 +124,6 @@ fn autonomy_cell(state: &ProjectState) -> String {
         .join("/")
 }
 
-/// A compact age string: seconds/minutes/hours/days, whichever is the
-/// coarsest unit that keeps the number small -- this column has no room
-/// for a full duration.
-fn format_duration(d: Duration) -> String {
-    let secs = d.as_secs();
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else if secs < 86_400 {
-        format!("{}h", secs / 3600)
-    } else {
-        format!("{}d", secs / 86_400)
-    }
-}
-
 /// `stalest(now)` rendered as `"<label> <age>"` -- one number that
 /// answers "how much of this screen should I believe". `—` when the
 /// project declares no sources at all.
@@ -224,6 +195,7 @@ mod tests {
     use parallax_baseline::freshness::Observed;
     use parallax_baseline::manifest::ArtifactKind;
     use parallax_baseline::state::{Degradation, ItemAutonomy};
+    use std::time::Duration;
 
     fn at(secs: u64) -> SystemTime {
         SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000 + secs)
