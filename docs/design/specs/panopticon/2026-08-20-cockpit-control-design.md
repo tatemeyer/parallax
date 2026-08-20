@@ -1,6 +1,6 @@
 # Cockpit: Full Control (Design)
 
-**Status:** proposed — awaiting sign-off. Nothing here is implemented.
+**Status:** implemented. See *What changed in the building* at the end.
 **Date:** 2026-08-20
 
 **Place in the roadmap:** sub-project #5 of the Parallax platform
@@ -230,3 +230,58 @@ panopticon/tests/read_only.rs        — rewritten boundary
    or should it define a minimal harness contract now?
 4. **Does the findings list belong in the artifacts pane or its own
    tab?** Rulings need it either way; the pane is already the busiest.
+
+## What changed in the building
+
+**`get` was not kept as a provided method.** The design argued for
+keeping it so no existing caller changed. Once `HttpRequest` carries a
+method, a `get()` that takes a request whose method might be `PUT` is a
+trap with a friendly name. The trait has one method, `send`, and the
+three call sites moved. `HttpRequest::get`, `::conditional` and
+`::write` are constructors instead, which is where the convenience
+belonged.
+
+**Hand-rolled JSON escaping was written and deleted.** The spec said
+nothing about it; the first implementation escaped label names by hand
+"to keep `serde_json` out of the write path". `serde_json` is already a
+dependency, and an escaping bug in a write path is invisible until it
+reaches GitHub, which is the one place there is no test.
+
+**The exemption list has three files, not one.** The design said only
+`control` may name an action. `app.rs` must, because the event loop is
+where a keypress becomes an intent, and `main.rs` must, because it is
+the composition root and the place fixture mode is denied executors. The
+test asserts the list is not a hole: it fails if `control` stops using
+actions, and it fails if the exemption ever swallows enough of the crate
+that fewer than six files are actually checked.
+
+**Question 2 answered: `y` is not enough for a merge.** It asks for the
+pull request number to be typed. The prompt is built from the action
+that raised it, so the number on screen is the number that will merge,
+and an operator who confirmed while looking at a different row types the
+wrong one and is cancelled rather than re-asked.
+
+**Question 1 answered:** `m` merge, `l` label, `R` request review, `p`
+capture, `P` push, `5` the action log. No action menu — the verbs are
+few enough to bind directly, and an overlay would be the second modal.
+
+**Question 3 answered: yes, deferred**, as designed, with
+`Unsupported` and a test.
+
+**Question 4 answered: the artifacts pane, not its own tab.** A run is
+one row and each of its findings is a row beneath it, which keeps the
+run's verdict word beside the findings it is a verdict on. Rulings are
+implemented: `u` upholds, `o` overrules, and the cursor on a run row
+rules on nothing, because "rule on this whole run" is not a thing Plumb
+has and offering it would write a ruling nothing suppresses.
+
+The evidence paragraph is deliberately not carried into the cockpit. It
+is written for a reader with the image in front of them, and the cockpit
+is not that reader.
+
+**A bug the tests did not catch and a capture did.** Windows reports a
+key release for every press. The binder filters them; the prompt's raw
+key path did not, so the very key that opened a prompt typed itself into
+it and the merge confirmation for #142 greeted the operator already
+holding `m`. Visible in `.plumb/runs/20260820T0500Z` as `Esc cancels: m_`
+and nowhere else. There is now a test, written after the picture.

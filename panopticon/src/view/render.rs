@@ -30,11 +30,20 @@ pub enum Tab {
     Artifacts,
     /// Which agent sessions are live.
     Sessions,
+    /// What this session has done. The one tab that is not about the
+    /// selected project — every entry names its own.
+    Log,
 }
 
 impl Tab {
-    /// The four tabs, in the order `1`–`4` select them.
-    pub const ALL: [Tab; 4] = [Tab::Work, Tab::Verification, Tab::Artifacts, Tab::Sessions];
+    /// The five tabs, in the order `1`–`5` select them.
+    pub const ALL: [Tab; 5] = [
+        Tab::Work,
+        Tab::Verification,
+        Tab::Artifacts,
+        Tab::Sessions,
+        Tab::Log,
+    ];
 
     /// The tab's label in the detail header.
     pub fn label(self) -> &'static str {
@@ -43,6 +52,7 @@ impl Tab {
             Tab::Verification => "VERIFY",
             Tab::Artifacts => "ARTIFACTS",
             Tab::Sessions => "SESSIONS",
+            Tab::Log => "LOG",
         }
     }
 }
@@ -64,6 +74,14 @@ pub struct Frame<'a> {
     pub now: SystemTime,
     /// Which row of the detail pane is selected.
     pub detail_selected: usize,
+    /// What this session has attempted, oldest first, as
+    /// `(summary, result, ok)`. Rendered strings rather than actions:
+    /// the render path is not allowed to name an action, and does not
+    /// need to.
+    pub log: &'a [(String, String, bool)],
+    /// The question on screen, when one is being asked. Presentation
+    /// only — the answer is handled in `control`, not here.
+    pub question: Option<&'a str>,
     /// Whether the Cloister Bell is currently ringing.
     ///
     /// Presentation only, and deliberately meagre: a line in the footer
@@ -165,6 +183,7 @@ fn render_detail(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer)
         Tab::Verification => verification_lines(frame, project),
         Tab::Artifacts => artifact_lines(project),
         Tab::Sessions => session_lines(frame, project),
+        Tab::Log => log_lines(frame),
     }
     .iter()
     .map(|line| elide(line, inner.width))
@@ -243,6 +262,23 @@ fn artifact_lines(project: &ProjectState) -> Vec<String> {
         .collect()
 }
 
+/// What this session has done. A cockpit that can act has to show what
+/// it did, and a failure has to be as legible as a success — an action
+/// that quietly did not happen is worse than one that visibly failed.
+fn log_lines(frame: &Frame<'_>) -> Vec<String> {
+    if frame.log.is_empty() {
+        return vec!["nothing attempted this session".to_string()];
+    }
+    frame
+        .log
+        .iter()
+        .map(|(summary, result, ok)| {
+            let mark = if *ok { "ok" } else { "!!" };
+            format!("{mark}  {summary}  —  {result}")
+        })
+        .collect()
+}
+
 fn session_lines(frame: &Frame<'_>, project: &ProjectState) -> Vec<String> {
     if !frame.declared.sessions {
         return vec!["not declared".to_string()];
@@ -266,6 +302,15 @@ fn session_lines(frame: &Frame<'_>, project: &ProjectState) -> Vec<String> {
 fn render_footer(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer) {
     let title = footer_title(frame);
     let inner = Block::new().title(&title).theme(theme).render(area, buf);
+
+    // A question outranks the source ages. The footer is the one strip
+    // guaranteed to be on screen, and an operator being asked something
+    // should not have to find where they were asked.
+    if let Some(question) = frame.question {
+        put_str(buf, inner.x, inner.y, &elide(question, inner.width), &inner);
+        return;
+    }
+
     let Some(project) = frame.project() else {
         return;
     };
@@ -310,6 +355,9 @@ fn elide(line: &str, width: u16) -> String {
 /// screen to account for it. Naming the projects turns a warning the
 /// operator has to go looking for into one they can act on.
 fn footer_title(frame: &Frame<'_>) -> String {
+    if frame.question.is_some() {
+        return "CONFIRM".to_string();
+    }
     if !frame.alarm {
         return "SOURCES".to_string();
     }

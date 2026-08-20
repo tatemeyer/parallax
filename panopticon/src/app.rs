@@ -6,11 +6,13 @@
 //! the UI thread is the rejected design wearing a different hat.
 
 use crate::bell::Bell;
+use crate::control::Control;
 use crate::keys::{binder, Action};
 use crate::refresh::{Clock, Refresher, Request, Update};
 use crate::view::model::Declared;
 use crate::view::render::{render, Frame, Tab};
-use crossterm::event::Event;
+use crossterm::event::{Event, KeyCode, KeyEventKind};
+use parallax_baseline::actions::{Action as BaseAction, Ruling};
 use parallax_baseline::state::{PlatformState, ProjectState};
 use parallax_baseline::validate::Validated;
 use std::collections::BTreeMap;
@@ -44,6 +46,7 @@ pub struct Panopticon {
     help: bool,
     quit: bool,
     bell: Bell,
+    control: Control,
 }
 
 impl Panopticon {
@@ -83,7 +86,72 @@ impl Panopticon {
             help: false,
             quit: false,
             bell: Bell::default(),
+            // Inert until a caller hands over executors. A cockpit run
+            // against fixtures keeps this one and refuses out loud.
+            control: Control::inert(projects.len()),
         }
+    }
+
+    /// Gives the cockpit the ability to act, one executor per project in
+    /// registry order. Without this it observes and refuses, which is
+    /// exactly what fixture mode wants.
+    pub fn with_control(mut self, control: Control) -> Self {
+        self.control = control;
+        self
+    }
+
+    /// Puts an artifact feed on the selected project, for tests that
+    /// need something on screen to point a key at. Not used outside
+    /// them: in a real run the refresh thread supplies this.
+    #[doc(hidden)]
+    pub fn seed_artifacts(
+        &mut self,
+        artifacts: Vec<parallax_baseline::adapters::artifact::Artifact>,
+    ) {
+        if let Some(project) = self.platform.projects.get_mut(self.selected) {
+            project.artifacts = vec![parallax_baseline::freshness::Observed::watched(
+                artifacts,
+                self.clock.now(),
+            )];
+        }
+    }
+
+    /// What this session has attempted, for the log pane.
+    fn log_lines(&self) -> Vec<(String, String, bool)> {
+        self.control
+            .log()
+            .iter()
+            .map(|e| (e.summary.clone(), e.result.clone(), e.ok))
+            .collect()
+    }
+
+    /// The finding under the cursor, when the artifacts pane is
+    /// showing one. `None` on a run row: a ruling addresses a finding,
+    /// and "rule on this whole run" is not a thing Plumb has.
+    fn selected_finding(&self) -> Option<String> {
+        if self.tab != Tab::Artifacts {
+            return None;
+        }
+        let project = self.platform.projects.get(self.selected)?;
+        match crate::view::artifacts::artifact_rows(project)
+            .into_iter()
+            .nth(self.detail_selected)?
+            .of
+        {
+            crate::view::artifacts::RowOf::Finding { fingerprint } => Some(fingerprint),
+            crate::view::artifacts::RowOf::Artifact => None,
+        }
+    }
+
+    /// The work row under the cursor, when the work pane is showing one.
+    fn selected_work(&self) -> Option<crate::view::work::WorkRow> {
+        if self.tab != Tab::Work {
+            return None;
+        }
+        let project = self.platform.projects.get(self.selected)?;
+        crate::view::work::work_rows(project)
+            .into_iter()
+            .nth(self.detail_selected)
     }
 
     /// The selected project's name, when there is one.
@@ -168,6 +236,7 @@ impl Panopticon {
                 Tab::Verification => p.verification.len().max(1),
                 Tab::Artifacts => crate::view::artifacts::artifact_rows(p).len(),
                 Tab::Sessions => crate::view::sessions::session_rows(p, self.clock.now()).len(),
+                Tab::Log => self.control.log().len(),
             })
             .unwrap_or(0)
     }
@@ -189,7 +258,11 @@ impl Panopticon {
                 self.detail_selected = 0;
             }
             Action::Tab(n) => {
-                self.tab = Tab::ALL[(n as usize - 1).min(3)];
+                self.tab = Tab::ALL[(n as usize - 1).min(Tab::ALL.len() - 1)];
+                self.detail_selected = 0;
+            }
+            Action::ActionLog => {
+                self.tab = Tab::Log;
                 self.detail_selected = 0;
             }
             // Requests, not work. Nothing below this line touches an
@@ -204,6 +277,96 @@ impl Panopticon {
                 }
             }
             Action::RunAllChecks => self.refresher.request(Request::RunAllChecks),
+            // The control verbs. Each builds an action from what is
+            // under the cursor and offers it; whether it may happen is
+            // `authorize`'s call and whether it does is the operator's.
+            // Nothing here performs anything.
+            Action::Merge => {
+                if let (Some(project), Some(row)) = (self.selected_name(), self.selected_work()) {
+                    // Issues do not merge. Offering it anyway would put
+                    // a question on screen whose only answer is no.
+                    if row.kind == '>' {
+                        self.control.offer(
+                            self.selected,
+                            BaseAction::MergePullRequest {
+                                project,
+                                number: row.number,
+                            },
+                        );
+                    }
+                }
+            }
+            Action::Label => {
+                if let (Some(project), Some(row)) = (self.selected_name(), self.selected_work()) {
+                    let question = format!("label #{}", row.number);
+                    self.control.ask(
+                        BaseAction::SetAutonomyLabel {
+                            project,
+                            item: row.number,
+                            label: String::new(),
+                        },
+                        question,
+                    );
+                }
+            }
+            Action::RequestReview => {
+                if let (Some(project), Some(row)) = (self.selected_name(), self.selected_work()) {
+                    self.control.offer(
+                        self.selected,
+                        BaseAction::RequestReReview {
+                            project,
+                            item: row.number,
+                        },
+                    );
+                }
+            }
+            Action::Capture => {
+                if let Some(project) = self.selected_name() {
+                    self.control.offer(
+                        self.selected,
+                        BaseAction::TriggerCapture {
+                            project,
+                            scenario: None,
+                        },
+                    );
+                }
+            }
+            Action::Push => {
+                if let Some(project) = self.selected_name() {
+                    self.control.ask(
+                        BaseAction::Push {
+                            project,
+                            branch: String::new(),
+                        },
+                        "push which branch".to_string(),
+                    );
+                }
+            }
+            // Ruling is the one input Plumb's learned-rejection store
+            // depends on. Both rulings are classified reversible by the
+            // platform spec and so neither asks: a ruling is an appended
+            // record, and an opposite one later supersedes it. That is
+            // worth knowing before pressing `o` -- overruling does take
+            // effect immediately, on every later run of that scenario.
+            Action::Uphold | Action::Overrule => {
+                if let (Some(project), Some(fingerprint)) =
+                    (self.selected_name(), self.selected_finding())
+                {
+                    let ruling = if action == Action::Uphold {
+                        Ruling::Upheld
+                    } else {
+                        Ruling::Overruled
+                    };
+                    self.control.offer(
+                        self.selected,
+                        BaseAction::RuleFinding {
+                            project,
+                            fingerprint,
+                            ruling,
+                        },
+                    );
+                }
+            }
             Action::Help => self.help = !self.help,
             Action::Quit => self.quit = true,
         }
@@ -212,6 +375,37 @@ impl Panopticon {
 
 impl App for Panopticon {
     fn update(&mut self, event: &Event) {
+        // A question owns the keyboard while it is up. This is what the
+        // cockpit's one modal actually means: `q` does not quit and `j`
+        // does not move, because both would be answers to a question
+        // nobody read.
+        if self.control.prompt().is_some() {
+            if let Event::Key(key) = event {
+                // Windows reports a Release for every Press, and the
+                // binder filters them where the read-only keys are
+                // resolved. This path reads raw events, so it has to do
+                // the same — without it, the very key that opens a
+                // prompt types itself into it, and a merge confirmation
+                // greets the operator pre-filled with `m`.
+                if key.kind != KeyEventKind::Press {
+                    return;
+                }
+                match key.code {
+                    KeyCode::Esc => self.control.cancel(),
+                    KeyCode::Enter => {
+                        self.control.key(self.selected, None);
+                    }
+                    KeyCode::Backspace => {
+                        self.control.key(self.selected, Some('\u{8}'));
+                    }
+                    KeyCode::Char(c) => {
+                        self.control.key(self.selected, Some(c));
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
         if let Some(action) = self.binder.feed(event) {
             self.act(action);
         }
@@ -220,6 +414,8 @@ impl App for Panopticon {
     fn view(&self, area: Rect, buf: &mut LayerStack) {
         let name = self.selected_name().unwrap_or_default();
         let pending = self.pending_checks(&name);
+        let log = self.log_lines();
+        let question = self.control.prompt().map(|p| p.line());
         let frame = Frame {
             platform: &self.platform,
             selected: self.selected,
@@ -228,6 +424,8 @@ impl App for Panopticon {
             pending_checks: &pending,
             now: self.clock.now(),
             detail_selected: self.detail_selected,
+            log: &log,
+            question: question.as_deref(),
             alarm: self.bell.ringing(self.clock.now()),
         };
         render(&frame, area, buf.push_layer());

@@ -155,6 +155,8 @@ fn frame<'a>(platform: &'a PlatformState, tab: Tab, pending: &'a [String]) -> Fr
         pending_checks: pending,
         now: at(12),
         detail_selected: 0,
+        log: &[],
+        question: None,
         alarm: false,
     }
 }

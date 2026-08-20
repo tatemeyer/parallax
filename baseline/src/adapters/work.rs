@@ -169,11 +169,8 @@ impl<T: HttpTransport> GithubWorkAdapter<T> {
 
     /// Fetches a URL conditionally. `Ok(None)` means "not modified".
     fn fetch(&mut self, url: &str) -> Result<Option<String>, AdapterError> {
-        let request = HttpRequest {
-            url: url.to_string(),
-            etag: self.etags.get(url).cloned(),
-        };
-        match self.transport.get(&request)? {
+        let request = HttpRequest::conditional(url, self.etags.get(url).cloned());
+        match self.transport.send(&request)? {
             HttpResponse::NotModified => Ok(None),
             HttpResponse::Ok { body, etag } => {
                 match etag {
@@ -189,10 +186,7 @@ impl<T: HttpTransport> GithubWorkAdapter<T> {
     /// endpoint changed and another did not: the snapshot is rebuilt as
     /// a whole, so a `304` on one half still needs that half's body.
     fn refetch_unconditionally(&mut self, url: &str) -> Result<String, AdapterError> {
-        match self.transport.get(&HttpRequest {
-            url: url.to_string(),
-            etag: None,
-        })? {
+        match self.transport.send(&HttpRequest::get(url))? {
             HttpResponse::Ok { body, etag } => {
                 if let Some(e) = etag {
                     self.etags.insert(url.to_string(), e);

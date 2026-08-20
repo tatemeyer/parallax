@@ -4,8 +4,10 @@
 //! multi-key chords against an app-defined action type — so chords cost
 //! nothing to add later, when sub-project #5 needs them.
 //!
-//! Deliberately small: every verb that mutates something belongs to the
-//! control sub-project, and binding one now would mean binding it twice.
+//! The mutating verbs live here alongside the read-only ones, but they
+//! only name an intent: what a key means is decided here, and whether it
+//! is allowed is decided by `authorize` in the library. This file cannot
+//! perform anything.
 
 use crossterm::event::KeyCode;
 use std::time::Duration;
@@ -28,6 +30,24 @@ pub enum Action {
     RunChecks,
     /// Run every project's build checks.
     RunAllChecks,
+    /// Merge the selected pull request. Confirmation required.
+    Merge,
+    /// Label the selected work item.
+    Label,
+    /// Ask for a fresh review of the selected work item.
+    RequestReview,
+    /// Capture this project's scenarios.
+    Capture,
+    /// Push a branch. Confirmation required.
+    Push,
+    /// Uphold the selected finding.
+    Uphold,
+    /// Overrule the selected finding, suppressing it on later runs.
+    /// Takes effect immediately: the platform spec classifies a ruling
+    /// as reversible, because a later opposite ruling supersedes it.
+    Overrule,
+    /// Show what this session has done.
+    ActionLog,
     /// Toggle the help overlay.
     Help,
     /// Leave.
@@ -59,6 +79,29 @@ pub fn binder() -> InputBinder<Action> {
         },
         Action::RunAllChecks,
     );
+    b.bind(KeyPress::plain(KeyCode::Char('m')), Action::Merge);
+    b.bind(KeyPress::plain(KeyCode::Char('l')), Action::Label);
+    b.bind(KeyPress::plain(KeyCode::Char('p')), Action::Capture);
+    // Shifted, as with `C` above. `p` and `P` differ by one modifier and
+    // mean very different things, which is survivable only because `P`
+    // asks before it does anything.
+    b.bind(
+        KeyPress {
+            code: KeyCode::Char('P'),
+            modifiers: crossterm::event::KeyModifiers::SHIFT,
+        },
+        Action::Push,
+    );
+    b.bind(
+        KeyPress {
+            code: KeyCode::Char('R'),
+            modifiers: crossterm::event::KeyModifiers::SHIFT,
+        },
+        Action::RequestReview,
+    );
+    b.bind(KeyPress::plain(KeyCode::Char('u')), Action::Uphold);
+    b.bind(KeyPress::plain(KeyCode::Char('o')), Action::Overrule);
+    b.bind(KeyPress::plain(KeyCode::Char('5')), Action::ActionLog);
     b.bind(KeyPress::plain(KeyCode::Char('?')), Action::Help);
     b.bind(KeyPress::plain(KeyCode::Char('q')), Action::Quit);
     b
