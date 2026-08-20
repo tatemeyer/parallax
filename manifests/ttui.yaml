@@ -1,0 +1,28 @@
+apiVersion: parallax/v1
+project:
+  name: ttui
+  root: <projects-root>/TTUI
+  language: rust
+  methodology: methodology-first     # informational only
+work:
+  adapter: github
+  repo: tatemeyer/ttui
+  autonomy_map:
+    direct: { implement: agent, merge: direct-push }
+    gated:  { implement: agent, merge: on-checks }
+    human:  { implement: agent, merge: human-approval }
+verification:
+  - kind: lint
+    adapter: command
+    command: cargo clippy --all-targets -- -D warnings
+  - kind: tests
+    adapter: command
+    command: cargo test
+  - kind: perceptual
+    adapter: plumb
+    config: .plumb/config.yaml
+artifacts:
+  - kind: capture
+    watch: .plumb/runs/**
+sessions:
+  watch: .claude/worktrees/*
