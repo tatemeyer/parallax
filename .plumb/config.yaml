@@ -12,17 +12,18 @@ scenarios:
     script: .plumb/scripts/cockpit-work.json
     intent: >
       The Parallax cockpit, showing recorded state with a frozen clock,
-      across two machines.
-      A project rail on the left lists three rows, each with a health
-      glyph: `sesh` and `ttui` read from this machine, and a third from a
-      recorded peer. The peer's row is qualified with the machine it is
-      on — `ttui@tates...`, ending in an ellipsis because the rail is
-      narrower than the whole name — and that suffix is the only thing
-      distinguishing it from the local `ttui` directly above it, which is
-      the entire reason it is there. In the first frame, before the peer
-      has answered, that row instead carries the machine's own name and a
-      pending glyph rather than an ok one: a machine nobody has heard
-      from has reported nothing, and nothing is not good news.
+      across three machines.
+      A project rail on the left lists four rows, each with a health
+      glyph: `sesh` and `ttui` read from this machine, and two more from
+      recorded peers. Each peer's row is qualified with the machine it is
+      on — `sesh@pi5`, and `ttui@tates...` ending in an ellipsis because
+      the rail is narrower than the whole name. That suffix is the only
+      thing distinguishing the last row from the local `ttui` two rows
+      above it, which is the entire reason it is there. In the first
+      frame, before either peer has answered, those rows instead carry
+      the machines' own bare names and a pending glyph rather than an ok
+      one: a machine nobody has heard from has reported nothing, and
+      nothing is not good news.
       The centre pane shows ttui's work in flight: issue and pull
       request numbers, their state, three autonomy columns, check counts,
       and titles. All three autonomy columns read as an em dash on every
@@ -42,11 +43,13 @@ scenarios:
     size: 120x30
     script: .plumb/scripts/cockpit-peer.json
     intent: >
-      The cockpit refusing to act on a machine it can only watch. The
-      operator moves the selection twice, landing on the row from the
-      recorded peer — the one whose name carries an `@machine` suffix —
-      and presses `c`, which on any local row runs that project's build
-      checks. Then `5`, which shows what this session has done.
+      The cockpit refusing to act on a machine it can only watch — and
+      the point of this scenario is that it is one of *two* recorded
+      machines, only one of which may be acted on. The operator moves
+      the selection three times, past a peer that does accept actions,
+      landing on the last row: the one on `tates-laptop`. They press
+      `c`, which on any local row runs that project's build checks. Then
+      `5`, which shows what this session has done.
       The final frame's detail pane holds exactly one entry, and it is a
       refusal rather than a result: it names the machine the row lives on
       and says this cockpit cannot act there, because the probe on that
@@ -54,6 +57,9 @@ scenarios:
       asks for confirmation at any point, because there is nothing to
       confirm — the action was never offered, and being told after
       typing a confirmation would be worse than being told before it.
+      The refusal must name `tates-laptop` specifically. A cockpit that
+      refused every remote row would pass a weaker version of this test
+      and be wrong: control is decided per machine, by that machine.
       The rail is unchanged
       throughout and no other project's row reacts, which is the whole
       point: the same keypress once ran a build against the local project
@@ -89,6 +95,59 @@ scenarios:
     touches:
       - panopticon/src/control/**
       - panopticon/src/view/render.rs
+
+  - name: cockpit-remote-confirm
+    adapter: pty
+    args: target/debug/panopticon.exe --fixtures panopticon/fixtures
+    size: 120x30
+    script: .plumb/scripts/cockpit-remote-confirm.json
+    intent: >
+      The cockpit asking to confirm an action that would run on a
+      different machine. The operator moves the selection twice, landing
+      on a row whose name carries an `@machine` suffix, and presses `m`.
+      The final frame's footer is titled CONFIRM and holds a question
+      that differs from the local confirmation in exactly one way that
+      matters: it names the machine. The question says which pull
+      request, and it says where — an operator one keystroke away from a
+      different machine's row must not be able to read this question and
+      think it is about the one in front of them. The pull request
+      number is still what has to be typed, because a keystroke is a
+      thing a hand does by reflex and a number is not.
+      Nothing else moves. The rail still shows every machine, the work
+      list stays readable behind the question, and no row anywhere shows
+      a result yet — nothing has been sent, and a screen that implied
+      otherwise would be claiming something about another machine that
+      is not true.
+    touches:
+      - panopticon/src/control/**
+      - panopticon/src/courier.rs
+      - panopticon/src/view/render.rs
+
+  - name: cockpit-unknown
+    adapter: pty
+    args: target/debug/panopticon.exe --fixtures panopticon/fixtures
+    size: 120x30
+    script: .plumb/scripts/cockpit-unknown.json
+    intent: >
+      The one thing a cockpit that acts across machines must be able to
+      say: **I do not know what happened.** The operator confirms a merge
+      on a remote row by typing the pull request number, and then presses
+      `5` to see what this session has done.
+      The final frame's detail pane holds one entry, and it is neither a
+      success nor a failure. Its mark is distinct from both — the screen
+      elsewhere uses `ok` for done and something clearly negative for
+      failed, and this is neither. The line names the machine, quotes the
+      action, and says the machine's answer could not be read.
+      This is the distinction the whole remote-control arc rests on, so
+      the frame is judged on whether an operator could confuse it with a
+      failure. A failure means nothing happened and retrying is safe. An
+      unknown means the merge may well have gone through and nobody can
+      say — and an operator who reads one as the other retries something
+      that already happened. If the entry reads as an error, that is a
+      NO-GO however tidy the layout is.
+    touches:
+      - panopticon/src/control/**
+      - panopticon/src/courier.rs
 
   - name: cockpit-findings
     adapter: pty

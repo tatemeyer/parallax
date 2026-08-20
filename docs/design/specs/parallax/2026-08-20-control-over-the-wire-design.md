@@ -287,6 +287,14 @@ meant. The summary that travels is the one the operator saw.
 - **Control in fixture mode.** A recorded cockpit stays inert, exactly
   as it is now, and says so rather than appearing to work.
 
+  > **Amended** by `2026-08-20-the-recorded-submitter-design.md`, and
+  > narrowed rather than lifted. A fixture-mode *local* action stays
+  > inert — it would shell out on this machine. A fixture-mode *remote*
+  > submission goes through `FixtureTransport`, which has no socket, so
+  > it can be recorded without any machine being reachable. What this
+  > bullet was protecting is kept; what it prohibited was wider than
+  > the protection needed.
+
 ## Testing
 
 - **An `Authorized` cannot be transmitted.** A compile-fail test, beside
@@ -398,3 +406,8 @@ meant. The summary that travels is the one the operator saw.
    **Recommendation: yes, as its own small arc** — it amends an approved
    non-goal, so it should not be smuggled in beside the feature it would
    photograph.
+
+   **Answered:** yes. Specified in
+   `2026-08-20-the-recorded-submitter-design.md`, as its own arc and its
+   own pull request, with the non-goal above narrowed rather than
+   dropped. Questions 1 to 3 are still open and still want a decision.
