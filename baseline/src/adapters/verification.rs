@@ -5,12 +5,13 @@
 
 use super::{AdapterError, ProjectContext};
 use crate::freshness::Observed;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
 /// What a verification check concluded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerificationOutcome {
     /// The check succeeded.
     Pass,
@@ -23,7 +24,7 @@ pub enum VerificationOutcome {
 }
 
 /// One verification check's current standing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationStatus {
     /// The manifest's display label for this check, e.g. `lint`.
     pub kind: String,

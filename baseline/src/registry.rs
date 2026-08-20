@@ -53,6 +53,7 @@ impl std::error::Error for RegistryError {}
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Registry {
     projects: Vec<RegisteredProject>,
+    peers: Vec<Peer>,
     failures: Vec<RegistryError>,
 }
 
@@ -87,7 +88,9 @@ impl Registry {
             problem: format!("parsing registry: {e}"),
         })?;
         let roots: Vec<PathBuf> = file.projects.into_iter().map(|p| p.root).collect();
-        Ok(Self::from_roots(&roots))
+        let mut registry = Self::from_roots(&roots);
+        registry.peers = file.peers;
+        Ok(registry)
     }
 
     /// Treats every immediate child of `projects_root` that contains a
@@ -122,14 +125,42 @@ impl Registry {
         &self.failures
     }
 
-    /// Whether nothing at all loaded.
+    /// The probes to fetch, in the order the registry file listed them.
+    ///
+    /// Only [`Registry::from_file`] ever yields any. A directory scan is
+    /// a statement about a disk, and a peer is not on it — there is
+    /// nothing on this machine that could tell a scan another machine
+    /// exists.
+    pub fn peers(&self) -> &[Peer] {
+        &self.peers
+    }
+
+    /// Whether nothing at all loaded — no local project **and** no peer.
+    ///
+    /// A registry naming only peers is not empty. It is the cockpit on a
+    /// machine that holds no checkouts and watches the other two, and a
+    /// frontend that refused to start on it would refuse exactly the
+    /// configuration remote hosts exist to enable.
     pub fn is_empty(&self) -> bool {
-        self.projects.is_empty()
+        self.projects.is_empty() && self.peers.is_empty()
     }
 }
 
-/// The registry file's schema. Roots and nothing else: a project's name
-/// comes from its own manifest, so a rename in `parallax.yaml` cannot
+/// Another machine running a probe.
+///
+/// A URL and nothing else, for the same reason a project entry is a
+/// root and nothing else: the peer's name and the projects it holds come
+/// from the peer. A list here saying what is on the Pi would be wrong
+/// the first time something changed on the Pi.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Peer {
+    /// Where the probe answers, e.g. `https://pi5.tail-scale.ts.net`.
+    pub url: String,
+}
+
+/// The registry file's schema. Roots and peers: a project's name comes
+/// from its own manifest and a peer's from its own probe, so neither can
 /// desynchronize from a list somewhere else.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -140,7 +171,15 @@ struct RegistryFile {
     #[allow(dead_code)]
     api_version: Option<String>,
     /// The registered project roots, in order.
+    ///
+    /// Defaults to empty: a cockpit on a machine holding no checkouts is
+    /// a real configuration — it watches the other two — and a file that
+    /// lists only peers should not have to write `projects: []`.
+    #[serde(default)]
     projects: Vec<RegistryEntry>,
+    /// The probes to fetch, in order.
+    #[serde(default)]
+    peers: Vec<Peer>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -293,5 +332,88 @@ mod tests {
     #[test]
     fn an_empty_registry_says_so() {
         assert!(Registry::default().is_empty());
+    }
+
+    /// Writes a registry file and loads it.
+    fn registry_file(dir: &Path, body: &str) -> Result<Registry, RegistryError> {
+        let path = dir.join("registry.yaml");
+        std::fs::write(&path, body).unwrap();
+        Registry::from_file(&path)
+    }
+
+    #[test]
+    fn a_registry_file_lists_its_peers_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = registry_file(
+            dir.path(),
+            "apiVersion: parallax/v1\nprojects: []\npeers:\n  - url: https://pi5.ts.net\n  - url: https://laptop.ts.net\n",
+        )
+        .unwrap();
+
+        let urls: Vec<&str> = registry.peers().iter().map(|p| p.url.as_str()).collect();
+        assert_eq!(urls, vec!["https://pi5.ts.net", "https://laptop.ts.net"]);
+    }
+
+    /// The configuration remote hosts exist to enable: a machine with no
+    /// checkouts, watching the other two.
+    #[test]
+    fn a_registry_naming_only_peers_loads_and_is_not_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = registry_file(dir.path(), "peers:\n  - url: https://pi5.ts.net\n").unwrap();
+
+        assert!(registry.projects().is_empty());
+        assert_eq!(registry.peers().len(), 1);
+        assert!(
+            !registry.is_empty(),
+            "a cockpit watching two machines would refuse to start"
+        );
+    }
+
+    /// Every registry file written before peers existed still loads.
+    #[test]
+    fn a_registry_file_with_no_peers_key_still_loads_and_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = project(dir.path(), "ttui-checkout", GOOD);
+        let registry = registry_file(
+            dir.path(),
+            &format!(
+                "projects:\n  - root: {}\n",
+                root.display().to_string().replace('\\', "/")
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(registry.projects().len(), 1);
+        assert!(registry.peers().is_empty());
+    }
+
+    /// The failure `deny_unknown_fields` exists to prevent: a mistyped
+    /// key that silently yields no peers reads exactly like a machine
+    /// that is switched off.
+    #[test]
+    fn a_mistyped_peers_key_is_refused_rather_than_yielding_no_peers() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = registry_file(dir.path(), "peer:\n  - url: https://pi5.ts.net\n").unwrap_err();
+        assert!(err.problem.contains("peer"), "got {}", err.problem);
+    }
+
+    #[test]
+    fn a_peer_entry_with_an_unknown_key_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = registry_file(
+            dir.path(),
+            "peers:\n  - url: https://pi5.ts.net\n    tocken: hunter2\n",
+        )
+        .unwrap_err();
+        assert!(err.problem.contains("tocken"), "got {}", err.problem);
+    }
+
+    /// A scan looks at a disk, and no disk knows another machine exists.
+    #[test]
+    fn a_directory_scan_yields_no_peers() {
+        let dir = tempfile::tempdir().unwrap();
+        project(dir.path(), "ttui", GOOD);
+        assert!(Registry::scan(dir.path()).peers().is_empty());
+        assert!(Registry::from_roots(&[]).peers().is_empty());
     }
 }

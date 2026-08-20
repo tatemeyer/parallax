@@ -9,10 +9,12 @@
 use panopticon::app::Panopticon;
 use panopticon::control::Control;
 use panopticon::fixtures;
-use panopticon::refresh::{Clock, Refresher};
+use panopticon::refresh::{BoxedPeer, Clock, Refresher};
 use parallax_baseline::actions::ActionExecutor;
 use parallax_baseline::adapters::factory::{executor_for, from_manifest, AdapterConfig};
+use parallax_baseline::adapters::http::{HttpTransport, UreqTransport};
 use parallax_baseline::freshness::DEFAULT_POLL_INTERVAL;
+use parallax_baseline::peers::PeerClient;
 use parallax_baseline::registry::Registry;
 use parallax_baseline::state::ProjectAdapters;
 use parallax_baseline::validate::Validated;
@@ -20,7 +22,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-panopticon — the Parallax cockpit (read-only)
+panopticon — the Parallax cockpit
 
 USAGE:
     panopticon [--projects-root <dir> | --registry <file> | --fixtures <dir>]
@@ -112,16 +114,21 @@ fn main() -> ExitCode {
         poll_interval: DEFAULT_POLL_INTERVAL,
         github_token: token,
     };
-    let (projects, clock, live) = match load(source, &config) {
+    let (projects, peers, clock, live) = match load(source, &config) {
         Ok(loaded) => loaded,
         Err(problem) => return fail(&problem),
     };
 
+    // A peer is named by its registry entry, never by what it answers
+    // with, so the rail can show a machine it has not reached yet.
+    let peer_names: Vec<String> = peers.iter().map(|p| p.name().to_string()).collect();
+
     let validated: Vec<Validated> = projects.iter().map(|(v, _)| v.clone()).collect();
     let control = Control::new(control_for(&validated, &config, live));
-    let refresher = Refresher::spawn(projects, clock);
-    let mut app =
-        Panopticon::new(&validated, refresher, clock, DEFAULT_POLL_INTERVAL).with_control(control);
+    let refresher = Refresher::spawn_with_peers(projects, peers, clock);
+    let mut app = Panopticon::new(&validated, refresher, clock, DEFAULT_POLL_INTERVAL)
+        .with_control(control)
+        .with_peers(peer_names);
 
     if let Err(e) = ttui::app::run(&mut app) {
         eprintln!("panopticon: {e}");
@@ -154,7 +161,12 @@ fn control_for(
 /// Turns the chosen source into projects and a clock.
 /// What a source resolves to: the projects and their adapters, the
 /// clock to read, and whether this run is allowed to act.
-type Loaded = (Vec<(Validated, ProjectAdapters)>, Clock, bool);
+type Loaded = (
+    Vec<(Validated, ProjectAdapters)>,
+    Vec<BoxedPeer>,
+    Clock,
+    bool,
+);
 
 /// Returns the projects, the clock, and whether this run may act.
 fn load(source: Source, config: &AdapterConfig) -> Result<Loaded, String> {
@@ -163,7 +175,7 @@ fn load(source: Source, config: &AdapterConfig) -> Result<Loaded, String> {
             let set = fixtures::load(&dir)?;
             // The one mode with no wall clock in it at all, and the one
             // that may not act: recorded state, real consequences.
-            return Ok((set.projects, Clock::Frozen(set.now), false));
+            return Ok((set.projects, set.peers, Clock::Frozen(set.now), false));
         }
         Source::ProjectsRoot(dir) => Registry::scan(&dir),
         Source::RegistryFile(file) => Registry::from_file(&file).map_err(|e| e.to_string())?,
@@ -186,7 +198,16 @@ fn load(source: Source, config: &AdapterConfig) -> Result<Loaded, String> {
         })
         .collect();
 
-    Ok((projects, Clock::System, true))
+    let peers = registry
+        .peers()
+        .iter()
+        .map(|peer| {
+            let transport: Box<dyn HttpTransport + Send> = Box::new(UreqTransport::new());
+            PeerClient::new(transport, &peer.url).with_interval(config.poll_interval)
+        })
+        .collect();
+
+    Ok((projects, peers, Clock::System, true))
 }
 
 /// An environment variable, when it is set to something.

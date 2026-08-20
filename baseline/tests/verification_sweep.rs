@@ -47,6 +47,43 @@ fn both_real_manifests_parse_and_validate() {
     );
 }
 
+/// This repository's own manifest, read from the **real file** rather
+/// than a fixture copy.
+///
+/// Every other project's manifest lives in another repository and can
+/// only be mirrored here, which is why those copies are documented as
+/// drifting. This one is in the same tree, so copying it would invent a
+/// drift that does not have to exist.
+///
+/// Parallax was for a long time the one project on the platform that the
+/// platform could not see: the cockpit showed TTUI and SESH and not
+/// itself, so an agent session running in this repository was invisible
+/// to the screen built to show agent sessions.
+#[test]
+fn this_repository_is_registered_with_its_own_platform() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("baseline sits inside the workspace");
+    let path = root.join("parallax.yaml");
+
+    let manifest =
+        parse_manifest_file(&path).unwrap_or_else(|e| panic!("{} must parse: {e}", path.display()));
+    let validated =
+        validate(manifest).unwrap_or_else(|e| panic!("{} must validate: {e:?}", path.display()));
+
+    let manifest = validated.manifest();
+    assert_eq!(manifest.project.name, "parallax");
+    assert!(
+        manifest.sessions.is_some(),
+        "the platform must be able to see its own agent sessions — \
+         the gap this manifest exists to close"
+    );
+    assert!(
+        manifest.work.is_some(),
+        "a registered project with no work feed shows an empty pane"
+    );
+}
+
 /// Bullet 2, second half: every row of the spec's projection table,
 /// against the real files, in the spec's own order.
 #[test]

@@ -36,6 +36,10 @@ pub struct Panopticon {
     /// "not run this session".
     ran: BTreeMap<String, Vec<String>>,
     refresher: Refresher,
+    /// The peers this cockpit watches, in registry order. Rows are kept
+    /// grouped by it so the rail does not reshuffle as machines answer
+    /// at different speeds.
+    peer_order: Vec<String>,
     binder: InputBinder<Action>,
     clock: Clock,
     poll_interval: Duration,
@@ -76,6 +80,7 @@ impl Panopticon {
             declared,
             ran: BTreeMap::new(),
             refresher,
+            peer_order: Vec::new(),
             binder: binder(),
             clock,
             poll_interval,
@@ -98,6 +103,38 @@ impl Panopticon {
     pub fn with_control(mut self, control: Control) -> Self {
         self.control = control;
         self
+    }
+
+    /// Names the peers this cockpit watches, in registry order.
+    ///
+    /// Seeds a row for each, for the same reason local projects get one:
+    /// a rail that is briefly empty and then briefly wrong is worse than
+    /// one that shows every machine it was told about and fills them in.
+    /// A machine that never answers keeps its row and acquires a reason.
+    pub fn with_peers(mut self, peers: Vec<String>) -> Self {
+        for peer in &peers {
+            self.platform.projects.push(ProjectState {
+                name: peer.clone(),
+                peer: Some(peer.clone()),
+                ..Default::default()
+            });
+        }
+        self.peer_order = peers;
+        self
+    }
+
+    /// Restores the order the rail is documented to have: local projects
+    /// in registry order, then each peer's, in registry order.
+    ///
+    /// Peers answer at different speeds, and without this a row would
+    /// move because a laptop happened to reply before a Pi. `sort_by_key`
+    /// is stable, so nothing within a group moves.
+    fn reorder(&mut self) {
+        let order = &self.peer_order;
+        self.platform.projects.sort_by_key(|p| match &p.peer {
+            None => 0,
+            Some(name) => 1 + order.iter().position(|n| n == name).unwrap_or(order.len()),
+        });
     }
 
     /// Puts an artifact feed on the selected project, for tests that
@@ -154,6 +191,35 @@ impl Panopticon {
             .nth(self.detail_selected)
     }
 
+    /// What the selected row declares, and which of its build checks
+    /// have not reported yet.
+    ///
+    /// Both were looked up by a bare project name, and a peer's row
+    /// shares that name with the local clone beside it — so on the Pi's
+    /// `sesh` pane they described **this** machine's `sesh`. The same
+    /// wrong-machine mistake as running its checks here, quieter for
+    /// being only a rendering.
+    ///
+    /// A peer's declarations come from what it actually sent, since its
+    /// manifest is on the peer. It has no outstanding build checks here
+    /// because this cockpit never starts one there — which is exactly
+    /// what the refusal in `act` means.
+    fn selected_declaration(&self) -> (Declared, Vec<String>) {
+        let Some(project) = self.platform.projects.get(self.selected) else {
+            return (Declared::default(), Vec::new());
+        };
+        if project.peer.is_some() {
+            return (Declared::observed(project), Vec::new());
+        }
+        (
+            self.declared
+                .get(&project.name)
+                .copied()
+                .unwrap_or_default(),
+            self.pending_checks(&project.name),
+        )
+    }
+
     /// The selected project's name, when there is one.
     fn selected_name(&self) -> Option<String> {
         self.platform
@@ -180,11 +246,17 @@ impl Panopticon {
                 // An update naming a project the registry never listed is
                 // dropped: the registry is the source of which projects
                 // exist, and a row no manifest backs would be a lie.
+                //
+                // `peer.is_none()` on every local lookup below: these
+                // updates come from this machine's own adapters, and
+                // this desktop holds a clone of `sesh` while the Pi
+                // serves one too. Matching on name alone would let a
+                // local refresh overwrite the Pi's row.
                 if let Some(slot) = self
                     .platform
                     .projects
                     .iter_mut()
-                    .find(|p| p.name == state.name)
+                    .find(|p| p.peer.is_none() && p.name == state.name)
                 {
                     *slot = *state;
                 }
@@ -194,7 +266,7 @@ impl Panopticon {
                     .platform
                     .projects
                     .iter_mut()
-                    .find(|p| p.name == project)
+                    .find(|p| p.peer.is_none() && p.name == project)
                 {
                     for check in checks {
                         let kind = check.value.kind.clone();
@@ -214,13 +286,55 @@ impl Panopticon {
                     .platform
                     .projects
                     .iter_mut()
-                    .find(|p| p.name == project)
+                    .find(|p| p.peer.is_none() && p.name == project)
                 {
                     slot.degradations
                         .push(parallax_baseline::state::Degradation {
                             source: format!("refresh:{project}"),
                             reason: problem,
                         });
+                }
+            }
+            Update::PeerState { peer, projects } => {
+                // The peer's whole list replaces the peer's whole list.
+                // A project removed on that machine has to leave the
+                // rail, and merging row by row could never say so.
+                self.platform
+                    .projects
+                    .retain(|p| p.peer.as_deref() != Some(peer.as_str()));
+                self.platform.extend_from_peer(&peer, projects);
+                self.reorder();
+            }
+            Update::PeerFailed { peer, reason } => {
+                let source = format!("peer:{peer}");
+                let degradation = parallax_baseline::state::Degradation {
+                    source: source.clone(),
+                    reason,
+                };
+                let mut had_rows = false;
+                for slot in self
+                    .platform
+                    .projects
+                    .iter_mut()
+                    .filter(|p| p.peer.as_deref() == Some(peer.as_str()))
+                {
+                    // The values it served last time stay on screen and
+                    // go stale on their own. This adds why they stopped
+                    // moving; it does not blank them, because the last
+                    // thing a machine said is still the last thing it
+                    // said.
+                    slot.degradations.retain(|d| d.source != source);
+                    slot.degradations.push(degradation.clone());
+                    had_rows = true;
+                }
+                if !had_rows {
+                    self.platform.projects.push(ProjectState {
+                        name: peer.clone(),
+                        peer: Some(peer),
+                        degradations: vec![degradation],
+                        ..Default::default()
+                    });
+                    self.reorder();
                 }
             }
         }
@@ -241,7 +355,39 @@ impl Panopticon {
             .unwrap_or(0)
     }
 
+    /// The peer a row belongs to, and what that row is called, when the
+    /// selection is not on this machine.
+    fn selected_remote(&self) -> Option<(String, String)> {
+        let project = self.platform.projects.get(self.selected)?;
+        let peer = project.peer.clone()?;
+        Some((project.qualified_name(), peer))
+    }
+
     fn act(&mut self, action: Action) {
+        // Everything this cockpit can *do* reaches only the machine it
+        // runs on: its executors are built from local projects, and a
+        // build check is dispatched to the local refresh thread by a
+        // bare project name. A peer's row shares that bare name with the
+        // local clone beside it, so an unguarded `c` on the Pi's `sesh`
+        // would run a build against this machine's `sesh` — the wrong
+        // machine, silently, on a row that never changes to show it.
+        //
+        // Refused here rather than at each verb, so a verb added later
+        // is covered by default; `acts_on_the_selected_project` is
+        // exhaustive so adding one forces the decision.
+        if action.acts_on_the_selected_project() {
+            if let Some((name, peer)) = self.selected_remote() {
+                self.control.refuse(
+                    format!("{name}: {action:?}"),
+                    format!(
+                        "{name} is on {peer}. This cockpit acts only on the machine it runs on — \
+                         control across the wire is not built yet."
+                    ),
+                );
+                return;
+            }
+        }
+
         match action {
             Action::Down => {
                 let last = self.detail_len().saturating_sub(1);
@@ -412,15 +558,14 @@ impl App for Panopticon {
     }
 
     fn view(&self, area: Rect, buf: &mut LayerStack) {
-        let name = self.selected_name().unwrap_or_default();
-        let pending = self.pending_checks(&name);
+        let (declared, pending) = self.selected_declaration();
         let log = self.log_lines();
         let question = self.control.prompt().map(|p| p.line());
         let frame = Frame {
             platform: &self.platform,
             selected: self.selected,
             tab: self.tab,
-            declared: self.declared.get(&name).copied().unwrap_or_default(),
+            declared,
             pending_checks: &pending,
             now: self.clock.now(),
             detail_selected: self.detail_selected,
@@ -499,6 +644,181 @@ mod tests {
             Clock::Frozen(at(0)),
             Duration::from_secs(30),
         )
+    }
+
+    /// A cockpit holding local `ttui` and `sesh`, plus a peer serving a
+    /// `sesh` of its own — the collision this whole guard exists for,
+    /// and the ordinary case: this desktop holds clones of everything.
+    fn cockpit_with_a_peers_clone() -> Panopticon {
+        let mut app = cockpit().with_peers(vec!["pi5".to_string()]);
+        app.apply(Update::PeerState {
+            peer: "pi5".into(),
+            projects: vec![ProjectState {
+                name: "sesh".into(),
+                ..Default::default()
+            }],
+        });
+        app
+    }
+
+    /// Selects the row whose qualified name matches, or fails loudly —
+    /// a test that silently acted on row 0 would prove the opposite of
+    /// what it claims.
+    fn select(app: &mut Panopticon, qualified: &str) {
+        app.selected = app
+            .platform
+            .projects
+            .iter()
+            .position(|p| p.qualified_name() == qualified)
+            .unwrap_or_else(|| panic!("no row named {qualified}"));
+    }
+
+    /// The bug this guard was written for. `c` on the Pi's `sesh` sent
+    /// `RunChecks { project: "sesh" }` — a bare name — to the local
+    /// refresh thread, which matched **this** machine's `sesh` and ran a
+    /// build on it. The operator's row never changed, and a different
+    /// row did.
+    #[test]
+    fn running_checks_on_a_peers_project_is_refused_rather_than_run_locally() {
+        let mut app = cockpit_with_a_peers_clone();
+        select(&mut app, "sesh@pi5");
+
+        app.act(Action::RunChecks);
+
+        let log = app.control.log();
+        assert_eq!(log.len(), 1, "the keypress vanished without a word");
+        assert!(!log[0].ok);
+        assert!(
+            log[0].result.contains("pi5"),
+            "the refusal must name the machine: {}",
+            log[0].result
+        );
+    }
+
+    /// Every verb that reaches an executor or the local refresh thread.
+    #[test]
+    fn no_verb_that_acts_on_a_project_reaches_a_peers_row() {
+        for action in [
+            Action::RunChecks,
+            Action::Merge,
+            Action::Label,
+            Action::RequestReview,
+            Action::Capture,
+            Action::Push,
+            Action::Uphold,
+            Action::Overrule,
+        ] {
+            let mut app = cockpit_with_a_peers_clone();
+            select(&mut app, "sesh@pi5");
+
+            app.act(action);
+
+            assert_eq!(
+                app.control.log().len(),
+                1,
+                "{action:?} was not refused on a remote row"
+            );
+            assert!(
+                app.control.prompt().is_none(),
+                "{action:?} put a confirmation on screen for an action it cannot perform"
+            );
+        }
+    }
+
+    /// And the guard must not swallow the local case, which is the one
+    /// that has to keep working.
+    #[test]
+    fn the_same_verbs_still_reach_a_local_project() {
+        let mut app = cockpit_with_a_peers_clone();
+        select(&mut app, "sesh");
+
+        app.act(Action::RunChecks);
+
+        assert!(
+            app.control.log().is_empty(),
+            "a local project was refused: {:?}",
+            app.control.log()
+        );
+    }
+
+    /// The Pi's `sesh` pane must be shaped by what the Pi sent, not by
+    /// this machine's `sesh` manifest. They share a bare name, and both
+    /// lookups behind the panes were keyed by it.
+    #[test]
+    fn a_peers_pane_is_shaped_by_what_it_sent_not_by_a_local_manifest() {
+        // A local `sesh` that declares a work feed, so borrowing it
+        // would be visible.
+        let local = validate(
+            parse_manifest(
+                "project:\n  name: sesh\n  root: /tmp/sesh\n\
+                 work:\n  adapter: github\n  repo: tatemeyer/sesh\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let projects = vec![local];
+        let refresher = Refresher::spawn(
+            projects
+                .iter()
+                .cloned()
+                .map(|v| (v, ProjectAdapters::new()))
+                .collect(),
+            Clock::Frozen(at(0)),
+        );
+        let mut app = Panopticon::new(
+            &projects,
+            refresher,
+            Clock::Frozen(at(0)),
+            Duration::from_secs(30),
+        )
+        .with_peers(vec!["pi5".to_string()]);
+
+        // The Pi's `sesh` declares no work feed and does have sessions —
+        // the opposite shape from the local one.
+        app.apply(Update::PeerState {
+            peer: "pi5".into(),
+            projects: vec![ProjectState {
+                name: "sesh".into(),
+                sessions: Some(parallax_baseline::freshness::Observed::watched(
+                    Vec::new(),
+                    at(0),
+                )),
+                ..Default::default()
+            }],
+        });
+
+        select(&mut app, "sesh");
+        assert!(
+            app.selected_declaration().0.work,
+            "the local manifest does declare a work feed"
+        );
+
+        select(&mut app, "sesh@pi5");
+        let (declared, pending) = app.selected_declaration();
+        assert!(
+            !declared.work,
+            "the Pi's pane borrowed this machine's manifest"
+        );
+        assert!(
+            declared.sessions,
+            "the Pi sent a session feed and the pane does not show it"
+        );
+        assert!(
+            pending.is_empty(),
+            "a peer has no build checks outstanding here — none can be started"
+        );
+    }
+
+    /// Moving and looking are never refused, however remote the row.
+    #[test]
+    fn navigation_is_never_refused_on_a_peers_row() {
+        let mut app = cockpit_with_a_peers_clone();
+        select(&mut app, "sesh@pi5");
+
+        for action in [Action::Down, Action::Up, Action::Tab(2), Action::Help] {
+            app.act(action);
+        }
+        assert!(app.control.log().is_empty());
     }
 
     fn press(code: KeyCode) -> Event {

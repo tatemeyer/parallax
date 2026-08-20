@@ -6,12 +6,13 @@
 
 use crate::adapters::artifact::{Artifact, ArtifactAdapter};
 use crate::adapters::session::{Session, SessionAdapter};
-use crate::adapters::verification::{VerificationAdapter, VerificationStatus};
+use crate::adapters::verification::{CheckCost, VerificationAdapter, VerificationStatus};
 use crate::adapters::work::{WorkAdapter, WorkSnapshot};
 use crate::adapters::{AdapterError, ProjectContext};
 use crate::autonomy::{resolve, Resolution};
 use crate::freshness::{Freshness, Observed};
 use crate::validate::Validated;
+use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 
 /// The adapters serving one project. Every family is optional, because
@@ -43,8 +44,31 @@ impl ProjectAdapters {
     }
 }
 
+/// Takes the checks that run a build out of `adapters`, leaving only
+/// what is safe to poll on a cadence, and returns the ones held back.
+///
+/// Lives here rather than in a frontend because **every** consumer that
+/// aggregates on a cadence must apply the same rule — a cockpit's
+/// refresh thread, its fixture mode, and a probe serving another
+/// machine. A second implementation of "which checks are safe to poll"
+/// is how something ends up running `cargo test` on a timer, and the
+/// probe makes that worse rather than better: three machines can then
+/// trigger it at once.
+pub fn split_by_cost(adapters: &mut ProjectAdapters) -> Vec<Box<dyn VerificationAdapter + Send>> {
+    let mut reading = Vec::new();
+    let mut executing = Vec::new();
+    for adapter in adapters.verification.drain(..) {
+        match adapter.cost() {
+            CheckCost::Read => reading.push(adapter),
+            CheckCost::Execute => executing.push(adapter),
+        }
+    }
+    adapters.verification = reading;
+    executing
+}
+
 /// One work item's labels, projected onto the normalized axes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemAutonomy {
     /// The item's number in its repository.
     pub number: u64,
@@ -53,7 +77,7 @@ pub struct ItemAutonomy {
 }
 
 /// A source that could not be read this cycle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Degradation {
     /// The adapter's `source_name`.
     pub source: String,
@@ -66,6 +90,15 @@ pub struct Degradation {
 pub struct ProjectState {
     /// The project's short name.
     pub name: String,
+    /// Which peer this came from, or `None` when it was read from this
+    /// machine's own disk.
+    ///
+    /// A name alone stopped identifying a project once the platform
+    /// spanned machines: this desktop holds clones of all three, so
+    /// `sesh` here and `sesh` on the Pi are two different answers about
+    /// two different working trees, and collapsing them would hide
+    /// whichever was found second.
+    pub peer: Option<String>,
     /// Its declared methodology. **Display only — never branched on.**
     pub methodology: Option<String>,
     /// Its primary language, for display.
@@ -95,10 +128,59 @@ pub struct PlatformState {
     pub projects: Vec<ProjectState>,
 }
 
+impl ProjectState {
+    /// A key unique across machines: `sesh` locally, `sesh@pi5` from a
+    /// peer.
+    ///
+    /// The core needs *a* unique key — anything holding a map of
+    /// projects breaks without one the moment two machines agree on a
+    /// name. How a cockpit spells it on screen is the cockpit's
+    /// business; this is the identity underneath.
+    pub fn qualified_name(&self) -> String {
+        match &self.peer {
+            // The stand-in row for a machine that has not answered is
+            // named for the machine itself, and `tates-laptop@tates-laptop`
+            // says the same thing twice while looking like a project that
+            // happens to share its host's name. The row means "this
+            // machine, and nothing known about it yet".
+            Some(peer) if *peer == self.name => self.name.clone(),
+            Some(peer) => format!("{}@{peer}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
 impl PlatformState {
-    /// Finds a project by name.
+    /// Finds a **local** project by name.
+    ///
+    /// Deliberately does not search peers: a caller passing a bare name
+    /// means the one on this disk, and silently returning a remote
+    /// project of the same name would be the collision this design
+    /// exists to prevent.
     pub fn project(&self, name: &str) -> Option<&ProjectState> {
-        self.projects.iter().find(|p| p.name == name)
+        self.projects
+            .iter()
+            .find(|p| p.name == name && p.peer.is_none())
+    }
+
+    /// Finds any project by the key [`ProjectState::qualified_name`]
+    /// returns.
+    pub fn qualified(&self, qualified_name: &str) -> Option<&ProjectState> {
+        self.projects
+            .iter()
+            .find(|p| p.qualified_name() == qualified_name)
+    }
+
+    /// Appends a peer's projects, tagging each with where it came from.
+    ///
+    /// Order is local projects first, then each peer in the order the
+    /// registry listed them, which keeps `projects` deterministic — the
+    /// property fixture mode depends on to render identical frames twice.
+    pub fn extend_from_peer(&mut self, peer: &str, projects: Vec<ProjectState>) {
+        self.projects.extend(projects.into_iter().map(|mut p| {
+            p.peer = Some(peer.to_string());
+            p
+        }));
     }
 }
 
@@ -602,5 +684,98 @@ mod freshness_surface_tests {
         assert_eq!(degraded.len(), 1);
         assert_eq!(degraded[0].0, "ttui");
         assert_eq!(degraded[0].1.source, "work:stub");
+    }
+}
+
+#[cfg(test)]
+mod peer_identity_tests {
+    use super::*;
+
+    fn project(name: &str) -> ProjectState {
+        ProjectState {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_local_project_is_named_by_itself_and_a_remote_one_by_its_peer() {
+        assert_eq!(project("sesh").qualified_name(), "sesh");
+
+        let mut platform = PlatformState::default();
+        platform.extend_from_peer("pi5", vec![project("sesh")]);
+        assert_eq!(platform.projects[0].qualified_name(), "sesh@pi5");
+        assert_eq!(platform.projects[0].peer.as_deref(), Some("pi5"));
+    }
+
+    /// The desktop holds clones of all three projects, so this is the
+    /// ordinary case rather than an edge one. Collapsing them would hide
+    /// whichever was found second.
+    #[test]
+    fn the_same_name_on_two_machines_is_two_rows() {
+        let mut platform = PlatformState {
+            projects: vec![project("sesh")],
+        };
+        platform.extend_from_peer("pi5", vec![project("sesh")]);
+
+        assert_eq!(platform.projects.len(), 2);
+        let keys: Vec<String> = platform
+            .projects
+            .iter()
+            .map(ProjectState::qualified_name)
+            .collect();
+        assert_eq!(keys, vec!["sesh".to_string(), "sesh@pi5".to_string()]);
+    }
+
+    /// A bare name means the checkout on this disk. Returning the Pi's
+    /// instead would be the collision the qualification exists to stop.
+    #[test]
+    fn looking_up_a_bare_name_finds_the_local_project_not_a_peers() {
+        let mut platform = PlatformState::default();
+        platform.extend_from_peer("pi5", vec![project("sesh")]);
+        assert!(
+            platform.project("sesh").is_none(),
+            "a remote project answered to a bare local name"
+        );
+
+        platform.projects.insert(0, project("sesh"));
+        assert_eq!(platform.project("sesh").unwrap().peer, None);
+        assert_eq!(
+            platform.qualified("sesh@pi5").unwrap().peer.as_deref(),
+            Some("pi5")
+        );
+    }
+
+    /// The stand-in row for a machine that has never answered. Seen for
+    /// real on a laptop with Tailscale but no probe, where it read
+    /// `tates-laptop@tates-laptop`.
+    #[test]
+    fn a_row_standing_in_for_a_whole_machine_is_named_once() {
+        let mut platform = PlatformState::default();
+        platform.extend_from_peer("tates-laptop", vec![project("tates-laptop")]);
+        assert_eq!(platform.projects[0].qualified_name(), "tates-laptop");
+        assert_eq!(
+            platform.projects[0].peer.as_deref(),
+            Some("tates-laptop"),
+            "it is still a remote row, and everything that acts on one must still refuse it"
+        );
+    }
+
+    /// Fixture mode renders identical frames twice, which needs a
+    /// deterministic order: local first, then peers as listed.
+    #[test]
+    fn projects_are_ordered_local_first_then_each_peer_in_turn() {
+        let mut platform = PlatformState {
+            projects: vec![project("parallax")],
+        };
+        platform.extend_from_peer("pi5", vec![project("sesh")]);
+        platform.extend_from_peer("laptop", vec![project("ttui")]);
+
+        let keys: Vec<String> = platform
+            .projects
+            .iter()
+            .map(ProjectState::qualified_name)
+            .collect();
+        assert_eq!(keys, vec!["parallax", "sesh@pi5", "ttui@laptop"]);
     }
 }

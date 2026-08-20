@@ -13,6 +13,8 @@ pub mod adapters;
 pub mod autonomy;
 pub mod freshness;
 pub mod manifest;
+pub mod peers;
 pub mod registry;
 pub mod state;
 pub mod validate;
+pub mod wire;

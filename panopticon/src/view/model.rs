@@ -25,7 +25,13 @@ pub enum Health {
 /// One row of the project rail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RailRow {
-    /// The project's short name.
+    /// What to call this project on screen: its short name when it is on
+    /// this machine, and `name@peer` when it is not.
+    ///
+    /// Qualified rather than bare because this desktop holds a clone of
+    /// `sesh` and the Pi serves one too. Two rows both reading `sesh`
+    /// would be worse than not showing the Pi at all — the operator
+    /// could act on the wrong one and never know.
     pub name: String,
     /// Its primary language, for display.
     pub language: Option<String>,
@@ -60,6 +66,28 @@ impl Declared {
             sessions: validated.declares(Family::Session),
         }
     }
+
+    /// What a peer's state demonstrates, for a row whose manifest this
+    /// machine has never seen.
+    ///
+    /// A local row reads its manifest and can tell an undeclared family
+    /// from a declared-but-empty one. A peer's manifest is on the peer,
+    /// so there is only what arrived. Looking the name up in this
+    /// machine's manifests instead would describe the *local* clone —
+    /// the Pi's `sesh` pane shaped by this desktop's `sesh`, which is
+    /// the same wrong-machine mistake as running its checks here.
+    ///
+    /// It under-claims rather than over-claims: a feed the peer declares
+    /// but has nothing in yet reads as undeclared. That errs toward
+    /// showing less, rather than toward inventing a source.
+    pub fn observed(project: &ProjectState) -> Self {
+        Self {
+            work: project.work.is_some(),
+            verification: !project.verification.is_empty(),
+            artifacts: !project.artifacts.is_empty(),
+            sessions: project.sessions.is_some(),
+        }
+    }
 }
 
 /// The worst of what a project knows about itself at `now`.
@@ -68,8 +96,21 @@ impl Declared {
 /// concluded. A project that declares nothing is `Ok` — it has no bad
 /// news, and inventing some would be a lie.
 pub fn health(project: &ProjectState, now: SystemTime) -> Health {
-    let sources_say = project
-        .sources(now)
+    let sources = project.sources(now);
+
+    // A peer's row with no sources at all means something different from
+    // a local project's. A local project that declares nothing **was
+    // read**, and found to declare nothing; there is genuinely no bad
+    // news. A remote row with nothing on it has not been heard from —
+    // it exists because a registry named the machine, not because
+    // anything answered. Reporting `Ok` would claim a check that never
+    // happened, which is the same species of lie as a fetched value
+    // calling itself `Live`.
+    if project.peer.is_some() && sources.is_empty() {
+        return Health::Pending;
+    }
+
+    let sources_say = sources
         .into_iter()
         .map(|s| match s.freshness {
             Freshness::Unavailable { .. } => Health::Broken,
@@ -112,7 +153,7 @@ pub fn rail_rows(state: &PlatformState, now: SystemTime) -> Vec<RailRow> {
         .projects
         .iter()
         .map(|p| RailRow {
-            name: p.name.clone(),
+            name: p.qualified_name(),
             language: p.language.clone(),
             health: health(p, now),
         })
@@ -128,6 +169,31 @@ mod tests {
     fn a_project_with_nothing_declared_is_ok_rather_than_unknown() {
         let p = bare_project("empty");
         assert_eq!(health(&p, at(0)), Health::Ok);
+    }
+
+    /// The same emptiness means the opposite thing on a peer's row. A
+    /// local project with no sources was read and found to declare
+    /// none; a machine that has not answered yet has told us nothing at
+    /// all, and `ok` there is a check that never happened.
+    #[test]
+    fn a_peer_that_has_not_answered_yet_is_pending_rather_than_ok() {
+        let mut state = PlatformState::default();
+        state.extend_from_peer("pi5", vec![bare_project("pi5")]);
+        assert_eq!(health(&state.projects[0], at(0)), Health::Pending);
+    }
+
+    /// And once it has answered, its rows are judged on what it said —
+    /// the rule above must not make every remote row permanently amber.
+    #[test]
+    fn a_peer_that_answered_is_judged_on_what_it_sent() {
+        let mut state = PlatformState::default();
+        state.extend_from_peer(
+            "pi5",
+            vec![project_with(|p| {
+                p.verification = vec![polled(check("tests", VerificationOutcome::Pass), at(0))];
+            })],
+        );
+        assert_eq!(health(&state.projects[0], at(0)), Health::Ok);
     }
 
     #[test]
@@ -208,5 +274,34 @@ mod tests {
             .map(|r| r.name)
             .collect();
         assert_eq!(names, vec!["zebra", "aardvark"], "not sorted");
+    }
+
+    /// The desktop holds a clone of `sesh` and the Pi serves one too, so
+    /// this is the ordinary case. Two rows both reading `sesh` would be
+    /// worse than not showing the Pi at all: the operator could press a
+    /// key at the wrong machine's project and never find out.
+    #[test]
+    fn a_peers_project_is_named_for_its_machine_and_a_local_one_is_not() {
+        let mut state = PlatformState::default();
+        state.projects.push(bare_project("sesh"));
+        state.extend_from_peer("pi5", vec![bare_project("sesh")]);
+
+        let names: Vec<String> = rail_rows(&state, at(0))
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        assert_eq!(names, vec!["sesh", "sesh@pi5"]);
+    }
+
+    /// The model is width-agnostic on purpose — it says what a project
+    /// is called and the renderer decides what fits. That matters here:
+    /// `ttui@tates-laptop` is 17 columns and the rail is 18 wide, so the
+    /// renderer has to elide it rather than clip it silently.
+    #[test]
+    fn a_qualified_name_is_returned_whole_and_left_for_the_renderer_to_fit() {
+        let mut state = PlatformState::default();
+        state.extend_from_peer("tates-laptop", vec![bare_project("ttui")]);
+        let row = &rail_rows(&state, at(0))[0];
+        assert_eq!(row.name, "ttui@tates-laptop");
     }
 }

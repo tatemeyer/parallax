@@ -1,0 +1,52 @@
+# How Parallax joins its own platform.
+#
+# Read by `parallax-baseline`, which aggregates every registered
+# project's work, verification, artifacts, and agent sessions into one
+# view. This repository is that library's home, and until now it was the
+# one project on the platform the platform could not see — the cockpit
+# showed TTUI and SESH and not itself, so an agent session running in
+# this repo was invisible to the screen built to show agent sessions.
+#
+# `root:` is deliberately absent: the registry knows where this clone
+# actually is, and a checked-in absolute path would be wrong on every
+# machine but one.
+apiVersion: parallax/v1
+project:
+  name: parallax
+  language: rust
+  methodology: methodology-first     # informational only; nothing branches on it
+work:
+  adapter: github
+  repo: tatemeyer/parallax
+  # No autonomy_map, for the reason TTUI's manifest gives at length: the
+  # tiers here are assigned from a plan's Slice/Task tags rather than
+  # from issue labels, so a map of labels nothing carries would project
+  # every row to "no claim" — which reads as a broken projection rather
+  # than as an honest "this project does not label its work that way".
+
+# The four gates CI runs, spelled the way CI spells them. A cockpit's
+# `c` key should run what the pipeline runs, or a green screen means
+# something different from a green build.
+verification:
+  - kind: lint
+    adapter: command
+    command: cargo clippy --workspace --all-targets -- -D warnings
+  - kind: tests
+    adapter: command
+    command: cargo test --workspace
+  - kind: format
+    adapter: command
+    command: cargo fmt --check
+  # Plumb judging the cockpit, which is this repository judging its own
+  # output. The adapter reads a rendered `verdict.md`; it does not link
+  # Plumb, and a test asserts baseline never grows that dependency.
+  - kind: perceptual
+    adapter: plumb
+    config: .plumb/config.yaml
+
+artifacts:
+  - kind: capture
+    watch: .plumb/runs/**
+
+sessions:
+  watch: .claude/worktrees/*

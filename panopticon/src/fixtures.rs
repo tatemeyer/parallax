@@ -14,10 +14,12 @@
 //! from. That is why the factory takes transport and runner *factories*
 //! rather than values.
 
+use crate::refresh::BoxedPeer;
 use parallax_baseline::adapters::factory::{from_manifest_with, AdapterConfig};
-use parallax_baseline::adapters::http::FixtureTransport;
+use parallax_baseline::adapters::http::{FixtureTransport, HttpTransport};
 use parallax_baseline::adapters::verification::ScriptedRunner;
 use parallax_baseline::adapters::work::{check_runs_url, issues_url, pulls_url};
+use parallax_baseline::peers::{PeerClient, STATE_PATH};
 use parallax_baseline::registry::Registry;
 use parallax_baseline::state::ProjectAdapters;
 use parallax_baseline::validate::Validated;
@@ -30,12 +32,19 @@ pub struct FixtureSet {
     pub now: SystemTime,
     /// Every project the fixture directory holds, with its adapters.
     pub projects: Vec<(Validated, ProjectAdapters)>,
+    /// Every recorded peer, each backed by a `FixtureTransport` rather
+    /// than a network. A cockpit showing three machines is exactly as
+    /// reproducible as one showing three directories.
+    pub peers: Vec<BoxedPeer>,
 }
 
 /// The file naming the frozen instant, as Unix seconds.
 pub const CLOCK_FILE: &str = "clock.txt";
 /// Where a project's recorded GitHub responses live.
 pub const GITHUB_DIR: &str = "github";
+/// Where recorded peer envelopes live: one `<name>.json` per machine,
+/// each holding exactly what that machine's probe would have served.
+pub const PEERS_DIR: &str = "peers";
 
 /// Loads a fixture directory.
 ///
@@ -49,9 +58,10 @@ pub fn load(dir: &Path) -> Result<FixtureSet, String> {
     if let Some(failure) = registry.failures().first() {
         return Err(format!("fixture {failure}"));
     }
-    if registry.is_empty() {
+    let peers = load_peers(dir)?;
+    if registry.is_empty() && peers.is_empty() {
         return Err(format!(
-            "{} holds no project directories with a parallax.yaml",
+            "{} holds no project directories with a parallax.yaml and no {PEERS_DIR}/",
             dir.display()
         ));
     }
@@ -76,7 +86,49 @@ pub fn load(dir: &Path) -> Result<FixtureSet, String> {
         })
         .collect();
 
-    Ok(FixtureSet { now, projects })
+    Ok(FixtureSet {
+        now,
+        projects,
+        peers,
+    })
+}
+
+/// Builds a peer per `peers/<name>.json`, each served by a transport
+/// holding that one recorded envelope.
+///
+/// The file name is the machine's name, and the URL is synthesized from
+/// it — no fixture set should contain a real address, because a fixture
+/// that could reach a network is not a fixture. An absent `peers/`
+/// directory is a fixture set with no peers, not an error: every
+/// recording made before remote hosts existed still loads.
+fn load_peers(dir: &Path) -> Result<Vec<BoxedPeer>, String> {
+    let Ok(entries) = std::fs::read_dir(dir.join(PEERS_DIR)) else {
+        return Ok(Vec::new());
+    };
+    // Sorted: `read_dir` order is filesystem-defined, and two runs must
+    // put the same machine in the same row.
+    let mut files: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "json"))
+        .collect();
+    files.sort();
+
+    let mut peers = Vec::new();
+    for file in files {
+        let name = file
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .ok_or_else(|| format!("fixture peer {} has no name", file.display()))?;
+        let body = std::fs::read_to_string(&file)
+            .map_err(|e| format!("fixture peer {}: {e}", file.display()))?;
+        let url = format!("https://{name}");
+        let mut transport = FixtureTransport::new();
+        transport.insert(format!("{url}{STATE_PATH}"), body, None);
+        let transport: Box<dyn HttpTransport + Send> = Box::new(transport);
+        peers.push(PeerClient::new(transport, url));
+    }
+    Ok(peers)
 }
 
 /// Reads the frozen instant. A fixture set without one is rejected

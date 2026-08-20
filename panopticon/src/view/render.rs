@@ -150,7 +150,14 @@ fn render_rail(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer) {
         .theme(theme)
         .render(area, buf);
     let rows = model::rail_rows(frame.platform, frame.now);
-    let lines: Vec<String> = rows.iter().map(rail_line).collect();
+    // Elided like the detail pane, not left to clip. A qualified name
+    // is the longest thing this pane ever holds — `ttui@tates-laptop`
+    // is 17 columns and the rail is 18 — and a row cut off without
+    // saying so reads as a name that simply is that short.
+    let lines: Vec<String> = rows
+        .iter()
+        .map(|row| elide(&rail_line(row), inner.width))
+        .collect();
     List::new(&lines, frame.selected).render(inner, buf);
 }
 
@@ -193,7 +200,12 @@ fn render_detail(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer)
 
 /// The tab strip, with the showing tab bracketed.
 fn detail_title(frame: &Frame<'_>) -> String {
-    let name = frame.project().map(|p| p.name.as_str()).unwrap_or("—");
+    // Qualified, like the rail: the header is how an operator confirms
+    // which machine's `sesh` they are about to press a key at.
+    let name = frame
+        .project()
+        .map(|p| p.qualified_name())
+        .unwrap_or_else(|| "—".to_string());
     let tabs: Vec<String> = Tab::ALL
         .iter()
         .map(|t| {

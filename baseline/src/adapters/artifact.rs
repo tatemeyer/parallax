@@ -6,12 +6,13 @@ use crate::adapters::verification::{parse_verdict, VerificationOutcome};
 use crate::freshness::Observed;
 use crate::manifest::ArtifactKind;
 use globset::GlobBuilder;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// One named scalar series read from a metrics feed.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Series {
     /// The series' key in the source records.
     pub name: String,
@@ -20,7 +21,7 @@ pub struct Series {
 }
 
 /// What an adapter learned about an artifact beyond its path.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ArtifactDetail {
     /// A pre-rendered image. The core reads its size, never its pixels.
     Figure {
@@ -53,7 +54,7 @@ pub enum ArtifactDetail {
 /// The evidence paragraph is deliberately not carried — it is written
 /// for a reader with the image in front of them, and the cockpit is
 /// not that reader.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunFinding {
     /// Plumb's stable identity for this finding.
     pub fingerprint: String,
@@ -108,7 +109,7 @@ fn string_at(value: &serde_json::Value, field: &str) -> String {
 }
 
 /// One artifact a run produced.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Artifact {
     /// Absolute path to the artifact.
     pub path: PathBuf,
