@@ -9,6 +9,7 @@
 //! this use case attached; working around it costs one `format!` per row.
 
 use crate::view::model::{Declared, Health, RailRow};
+use crate::view::sanitize::sanitize;
 use crate::view::status::SourceCell;
 use crate::view::{artifacts, model, sessions, status, verification, work};
 use parallax_baseline::state::{PlatformState, ProjectState};
@@ -172,7 +173,10 @@ fn rail_line(row: &RailRow) -> String {
 
 fn render_detail(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer) {
     let title = detail_title(frame);
-    let inner = Block::new().title(&title).theme(theme).render(area, buf);
+    let inner = Block::new()
+        .title(&sanitize(&title))
+        .theme(theme)
+        .render(area, buf);
 
     let Some(project) = frame.project() else {
         put_str(
@@ -313,7 +317,10 @@ fn session_lines(frame: &Frame<'_>, project: &ProjectState) -> Vec<String> {
 /// says how many it could not fit.
 fn render_footer(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer) {
     let title = footer_title(frame);
-    let inner = Block::new().title(&title).theme(theme).render(area, buf);
+    let inner = Block::new()
+        .title(&sanitize(&title))
+        .theme(theme)
+        .render(area, buf);
 
     // A question outranks the source ages. The footer is the one strip
     // guaranteed to be on screen, and an operator being asked something
@@ -346,6 +353,13 @@ fn render_footer(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer)
 /// cannot be captured cannot be judged.
 fn elide(line: &str, width: u16) -> String {
     const MARK: &str = "...";
+    // Sanitised *before* measuring, not only on the way to the buffer.
+    // An escape is several `char`s and zero display columns, so counting
+    // the raw string truncates against a length that has nothing to do
+    // with what is visible — the cell reads as full while showing almost
+    // nothing, and the `...` claims there is more when there is not.
+    let line = sanitize(line);
+    let line = line.as_str();
     let width = width as usize;
     if line.chars().count() <= width {
         return line.to_string();
@@ -416,11 +430,26 @@ fn footer_line(cells: &[SourceCell], width: u16) -> String {
 }
 
 /// Writes a string at `(x, y)`, clipped to `area`.
+///
+/// Sanitised here, because almost everything the cockpit shows was
+/// captured from somewhere else — command output, a pull request title,
+/// a directory name, an adapter's error — and any of it can carry ANSI
+/// escapes that would reach the terminal and steer it.
+///
+/// **This is not the only way a character becomes a cell**, which is
+/// worth saying plainly rather than discovering later: `List` and
+/// `Block` write to the buffer themselves. So the same call is made in
+/// [`elide`], through which every list line passes, and on the two block
+/// titles. Three call sites is a habit rather than a property, so
+/// `tests/rendering.rs` asserts the end of it instead — that a frame
+/// built from state where *every* observed field is packed with escapes
+/// leaves no control character anywhere in the buffer, whichever path
+/// drew it.
 fn put_str(buf: &mut Buffer, x: u16, y: u16, text: &str, area: &Rect) {
     if y >= area.y + area.height {
         return;
     }
-    for (i, ch) in text.chars().enumerate() {
+    for (i, ch) in sanitize(text).chars().enumerate() {
         let cx = x + i as u16;
         if cx >= area.x + area.width {
             break;
