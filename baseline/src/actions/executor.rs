@@ -123,6 +123,16 @@ impl<W: WorkControl, P: ProcessControl> LocalExecutor<W, P> {
         }
     }
 
+    /// The repository this executor addresses, as `owner/name`.
+    pub fn repo(&self) -> &str {
+        &self.repo
+    }
+
+    /// Where rulings are appended.
+    pub fn rulings_path(&self) -> &std::path::Path {
+        &self.rulings_path
+    }
+
     /// The work-side control, for asserting what it was asked to do.
     pub fn work(&self) -> &W {
         &self.work

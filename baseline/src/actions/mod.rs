@@ -10,12 +10,16 @@
 
 mod confirm;
 mod executor;
+mod github;
+mod process;
 
 pub use confirm::{authorize, fingerprint, ActionError, Authorized, Confirmation};
 pub use executor::{
     ActionExecutor, ActionOutcome, Effect, LocalExecutor, ProcessControl, RecordingExecutor,
     WorkControl,
 };
+pub use github::GithubWorkControl;
+pub use process::LocalProcessControl;
 
 use serde::{Deserialize, Serialize};
 

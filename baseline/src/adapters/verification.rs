@@ -124,6 +124,7 @@ pub struct ScriptedRunner {
     outputs: std::collections::VecDeque<CommandOutput>,
     next_error: Option<std::io::Error>,
     calls: Vec<String>,
+    cwds: Vec<PathBuf>,
 }
 
 impl ScriptedRunner {
@@ -146,11 +147,19 @@ impl ScriptedRunner {
     pub fn calls(&self) -> &[String] {
         &self.calls
     }
+
+    /// The working directory each call was made in, in the same order.
+    /// A command that runs in the wrong tree is not the command the
+    /// caller asked for, so a test has to be able to see it.
+    pub fn cwds(&self) -> &[PathBuf] {
+        &self.cwds
+    }
 }
 
 impl CommandRunner for ScriptedRunner {
-    fn run(&mut self, command: &str, _cwd: &Path) -> std::io::Result<CommandOutput> {
+    fn run(&mut self, command: &str, cwd: &Path) -> std::io::Result<CommandOutput> {
         self.calls.push(command.to_string());
+        self.cwds.push(cwd.to_path_buf());
         if let Some(e) = self.next_error.take() {
             return Err(e);
         }

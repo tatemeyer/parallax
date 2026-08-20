@@ -13,6 +13,7 @@ use super::verification::{
     CommandRunner, CommandVerificationAdapter, PlumbVerificationAdapter, ProcessRunner,
 };
 use super::work::GithubWorkAdapter;
+use crate::actions::{GithubWorkControl, LocalExecutor, LocalProcessControl};
 use crate::freshness::DEFAULT_POLL_INTERVAL;
 use crate::manifest::{
     ArtifactAdapterKind, VerificationAdapterKind, VerificationEntry, WorkAdapterKind,
@@ -144,6 +145,38 @@ pub fn from_manifest(validated: &Validated, config: &AdapterConfig) -> ProjectAd
         },
         || ProcessRunner,
     )
+}
+
+/// The executor for one project: GitHub for work, the local shell for
+/// processes, rulings appended beside the project's Plumb state.
+///
+/// `None` when the project declares no work feed — there is nothing for
+/// a work action to address, and an executor that cannot name a
+/// repository would fail at the point of use instead of at the point of
+/// construction.
+pub fn executor_for(
+    validated: &Validated,
+    config: &AdapterConfig,
+) -> Option<LocalExecutor<GithubWorkControl<UreqTransport>, LocalProcessControl<ProcessRunner>>> {
+    let work = validated.manifest().work.as_ref()?;
+    let transport = match &config.github_token {
+        Some(t) => UreqTransport::with_token(t.clone()),
+        None => UreqTransport::new(),
+    };
+    // The manifest's declared root, which the registry has already
+    // overridden with where the project was actually found.
+    let root: PathBuf = validated
+        .manifest()
+        .project
+        .root
+        .clone()
+        .unwrap_or_default();
+    Some(LocalExecutor::new(
+        work.repo.clone(),
+        root.join(".plumb").join("rulings.jsonl"),
+        GithubWorkControl::new(transport),
+        LocalProcessControl::new(ProcessRunner, root),
+    ))
 }
 
 #[cfg(test)]
@@ -363,5 +396,56 @@ verification:
         )
         .unwrap();
         assert!(validate(m).is_err(), "the factory's expect depends on this");
+    }
+}
+
+#[cfg(test)]
+mod executor_tests {
+    use super::*;
+
+    fn validated(yaml: &str) -> Validated {
+        crate::validate::validate(serde_yaml::from_str(yaml).expect("parses")).expect("validates")
+    }
+
+    const WITH_WORK: &str = "project:
+  name: ttui
+  root: D:/Dev/TTUI
+work:
+  adapter: github
+  repo: tatemeyer/ttui
+  autonomy_map: {}
+";
+
+    #[test]
+    fn an_executor_addresses_the_repository_the_manifest_declares() {
+        let v = validated(WITH_WORK);
+        let e = executor_for(&v, &AdapterConfig::default()).expect("work is declared");
+        assert_eq!(e.repo(), "tatemeyer/ttui");
+    }
+
+    /// Rulings live beside the project's other Plumb state, not in a
+    /// directory the cockpit invents.
+    #[test]
+    fn rulings_are_appended_inside_the_project_s_plumb_directory() {
+        let v = validated(WITH_WORK);
+        let e = executor_for(&v, &AdapterConfig::default()).unwrap();
+        assert_eq!(
+            e.rulings_path(),
+            Path::new("D:/Dev/TTUI")
+                .join(".plumb")
+                .join("rulings.jsonl")
+        );
+    }
+
+    /// No work feed, no repository to address. Failing here beats
+    /// failing at the moment the operator confirms a merge.
+    #[test]
+    fn a_project_with_no_work_feed_has_no_executor() {
+        let v = validated(
+            "project:
+  name: bare
+",
+        );
+        assert!(executor_for(&v, &AdapterConfig::default()).is_none());
     }
 }

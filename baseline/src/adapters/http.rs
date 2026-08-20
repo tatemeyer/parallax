@@ -1,18 +1,91 @@
 //! The HTTP seam. Everything above this file works against
 //! `HttpTransport`, which means the GitHub adapter is exercised entirely
 //! against recorded fixtures — no network in any test.
+//!
+//! Reads and writes share one seam deliberately. A control action is
+//! only testable if a test can state exactly what would have been sent
+//! without sending it, and that is what `FixtureTransport` records.
 
 use super::AdapterError;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// A conditional GET.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What a request does. Reads are conditional; writes never are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Method {
+    /// Read.
+    #[default]
+    Get,
+    /// Create, or act on, a subresource.
+    Post,
+    /// Replace, or perform, an operation named by the URL.
+    Put,
+    /// Amend part of a resource.
+    Patch,
+    /// Remove.
+    Delete,
+}
+
+impl Method {
+    /// The verb as it goes on the wire.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            Method::Put => "PUT",
+            Method::Patch => "PATCH",
+            Method::Delete => "DELETE",
+        }
+    }
+
+    /// Whether this method changes anything at the far end.
+    pub fn is_write(&self) -> bool {
+        !matches!(self, Method::Get)
+    }
+}
+
+/// One request: a conditional read, or a write carrying a body.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HttpRequest {
+    /// What to do.
+    pub method: Method,
     /// The absolute URL.
     pub url: String,
     /// The ETag from the last successful response, when there was one.
+    /// Meaningless on a write, and never sent on one.
     pub etag: Option<String>,
+    /// The request body, on a write.
+    pub body: Option<String>,
+}
+
+impl HttpRequest {
+    /// An unconditional read.
+    pub fn get(url: impl Into<String>) -> Self {
+        Self {
+            method: Method::Get,
+            url: url.into(),
+            etag: None,
+            body: None,
+        }
+    }
+
+    /// A read that will settle for a `304`.
+    pub fn conditional(url: impl Into<String>, etag: Option<String>) -> Self {
+        Self {
+            etag,
+            ..Self::get(url)
+        }
+    }
+
+    /// A write.
+    pub fn write(method: Method, url: impl Into<String>, body: impl Into<String>) -> Self {
+        Self {
+            method,
+            url: url.into(),
+            etag: None,
+            body: Some(body.into()),
+        }
+    }
 }
 
 /// What a conditional GET returned.
@@ -29,10 +102,10 @@ pub enum HttpResponse {
     NotModified,
 }
 
-/// Something that can perform a conditional GET.
+/// Something that can perform an HTTP request.
 pub trait HttpTransport {
     /// Performs the request.
-    fn get(&mut self, request: &HttpRequest) -> Result<HttpResponse, AdapterError>;
+    fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, AdapterError>;
 }
 
 /// The live transport. **The only type in this crate that touches the
@@ -69,10 +142,10 @@ impl Default for UreqTransport {
 }
 
 impl HttpTransport for UreqTransport {
-    fn get(&mut self, request: &HttpRequest) -> Result<HttpResponse, AdapterError> {
+    fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, AdapterError> {
         let mut req = self
             .agent
-            .get(&request.url)
+            .request(request.method.as_str(), &request.url)
             .set("Accept", "application/vnd.github+json");
         if let Some(token) = &self.token {
             req = req.set("Authorization", &format!("Bearer {token}"));
@@ -80,7 +153,11 @@ impl HttpTransport for UreqTransport {
         if let Some(etag) = &request.etag {
             req = req.set("If-None-Match", etag);
         }
-        match req.call() {
+        let sent = match &request.body {
+            Some(body) => req.send_string(body),
+            None => req.call(),
+        };
+        match sent {
             Ok(resp) => {
                 let etag = resp.header("ETag").map(str::to_string);
                 let body = resp
@@ -137,17 +214,57 @@ impl FixtureTransport {
         &self.requests
     }
 
+    /// Every write this transport was asked to perform, in order —
+    /// method, URL and body, which is exactly what a test needs to
+    /// assert about a control action it must not actually perform.
+    pub fn writes(&self) -> Vec<&HttpRequest> {
+        self.requests
+            .iter()
+            .filter(|r| r.method.is_write())
+            .collect()
+    }
+
+    /// Records what a write returns. Only needed when the caller reads
+    /// the response; an unregistered write succeeds with `{}`.
+    pub fn insert_write(
+        &mut self,
+        method: Method,
+        url: impl Into<String>,
+        body: impl Into<String>,
+    ) {
+        self.responses
+            .insert(write_key(method, &url.into()), (body.into(), None));
+    }
+
     /// Makes the next request fail with `error`, once.
     pub fn fail_next(&mut self, error: AdapterError) {
         self.next_error = Some(error);
     }
 }
 
+/// Writes are keyed by method as well as URL: `POST /pulls/12/merge`
+/// and `PUT /pulls/12/merge` are different acts on the same path.
+fn write_key(method: Method, url: &str) -> String {
+    format!("{} {url}", method.as_str())
+}
+
 impl HttpTransport for FixtureTransport {
-    fn get(&mut self, request: &HttpRequest) -> Result<HttpResponse, AdapterError> {
+    fn send(&mut self, request: &HttpRequest) -> Result<HttpResponse, AdapterError> {
         self.requests.push(request.clone());
         if let Some(e) = self.next_error.take() {
             return Err(e);
+        }
+        // A write is recorded and acknowledged. Its point in a test is
+        // what was sent, not what came back — and requiring every
+        // control test to register a canned response would make the
+        // assertion about the fixture rather than about the caller.
+        if request.method.is_write() {
+            let body = self
+                .responses
+                .get(&write_key(request.method, &request.url))
+                .map(|(b, _)| b.clone())
+                .unwrap_or_else(|| "{}".to_string());
+            return Ok(HttpResponse::Ok { body, etag: None });
         }
         match self.responses.get(&request.url) {
             None => Err(AdapterError::Http {
@@ -186,10 +303,7 @@ mod tests {
     fn a_request_without_an_etag_gets_the_body_and_the_current_etag() {
         let mut t = transport();
         let r = t
-            .get(&HttpRequest {
-                url: "https://api.github.com/repos/a/b/issues".into(),
-                etag: None,
-            })
+            .send(&HttpRequest::get("https://api.github.com/repos/a/b/issues"))
             .unwrap();
         match r {
             HttpResponse::Ok { body, etag } => {
@@ -204,10 +318,10 @@ mod tests {
     fn a_request_carrying_the_matching_etag_gets_not_modified() {
         let mut t = transport();
         let r = t
-            .get(&HttpRequest {
-                url: "https://api.github.com/repos/a/b/issues".into(),
-                etag: Some("W/\"abc\"".into()),
-            })
+            .send(&HttpRequest::conditional(
+                "https://api.github.com/repos/a/b/issues",
+                Some("W/\"abc\"".into()),
+            ))
             .unwrap();
         assert_eq!(r, HttpResponse::NotModified);
     }
@@ -216,10 +330,10 @@ mod tests {
     fn a_request_carrying_a_stale_etag_gets_the_new_body() {
         let mut t = transport();
         let r = t
-            .get(&HttpRequest {
-                url: "https://api.github.com/repos/a/b/issues".into(),
-                etag: Some("W/\"old\"".into()),
-            })
+            .send(&HttpRequest::conditional(
+                "https://api.github.com/repos/a/b/issues",
+                Some("W/\"old\"".into()),
+            ))
             .unwrap();
         assert!(matches!(r, HttpResponse::Ok { .. }));
     }
@@ -228,10 +342,7 @@ mod tests {
     fn an_unknown_url_is_a_404_rather_than_a_panic() {
         let mut t = transport();
         let e = t
-            .get(&HttpRequest {
-                url: "https://api.github.com/nope".into(),
-                etag: None,
-            })
+            .send(&HttpRequest::get("https://api.github.com/nope"))
             .unwrap_err();
         assert!(matches!(e, AdapterError::Http { status: 404, .. }));
     }
@@ -240,14 +351,8 @@ mod tests {
     fn every_request_is_recorded_so_a_test_can_assert_conditionality() {
         let mut t = transport();
         let url = "https://api.github.com/repos/a/b/issues";
-        let _ = t.get(&HttpRequest {
-            url: url.into(),
-            etag: None,
-        });
-        let _ = t.get(&HttpRequest {
-            url: url.into(),
-            etag: Some("W/\"abc\"".into()),
-        });
+        let _ = t.send(&HttpRequest::get(url));
+        let _ = t.send(&HttpRequest::conditional(url, Some("W/\"abc\"".into())));
         assert_eq!(t.requests().len(), 2);
         assert_eq!(t.requests()[0].etag, None);
         assert_eq!(t.requests()[1].etag.as_deref(), Some("W/\"abc\""));
@@ -261,28 +366,15 @@ mod tests {
             message: "rate limit exceeded".into(),
         });
         let url = "https://api.github.com/repos/a/b/issues";
-        assert!(t
-            .get(&HttpRequest {
-                url: url.into(),
-                etag: None
-            })
-            .is_err());
-        assert!(t
-            .get(&HttpRequest {
-                url: url.into(),
-                etag: None
-            })
-            .is_ok());
+        assert!(t.send(&HttpRequest::get(url)).is_err());
+        assert!(t.send(&HttpRequest::get(url)).is_ok());
     }
 
     #[test]
     fn a_fixture_transport_is_usable_as_a_trait_object() {
         let mut boxed: Box<dyn HttpTransport> = Box::new(transport());
         assert!(boxed
-            .get(&HttpRequest {
-                url: "https://api.github.com/repos/a/b/issues".into(),
-                etag: None
-            })
+            .send(&HttpRequest::get("https://api.github.com/repos/a/b/issues"))
             .is_ok());
     }
 }
