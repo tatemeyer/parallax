@@ -10,3 +10,4 @@
 
 pub mod autonomy;
 pub mod manifest;
+pub mod validate;
