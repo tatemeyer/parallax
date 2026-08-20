@@ -1,26 +1,19 @@
 //! `parallax-probe` — serves one machine's platform state.
 //!
-//! Run it on every machine that holds projects. It scans that machine's
-//! own disk with the adapters `parallax-baseline` already provides and
-//! serves the aggregated result as JSON on loopback. A cockpit anywhere
-//! on the tailnet fetches it and merges it with its own.
+//! The command line: arguments, credential discovery, and the bind.
+//! Everything it does lives in the library beside it — see `lib.rs` for
+//! what the probe is and `server::bind_address` for why it only ever
+//! listens on loopback.
 //!
-//! ```text
-//! parallax-probe --projects-root ~/Dev
-//! tailscale serve --bg --https=443 http://127.0.0.1:8737
-//! ```
-//!
-//! It never binds a routable address; see [`server::bind_address`].
+//! This is the one file here that reads the environment. The library
+//! takes what it is given, so it behaves identically in a test.
 
 #![warn(missing_docs)]
-
-mod server;
-mod state;
 
 use parallax_baseline::adapters::factory::AdapterConfig;
 use parallax_baseline::freshness::DEFAULT_POLL_INTERVAL;
 use parallax_baseline::registry::Registry;
-use server::{bind_address, serve, DEFAULT_PORT};
+use parallax_probe::server::{Probe, DEFAULT_PORT};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -146,27 +139,20 @@ fn main() -> ExitCode {
     };
 
     let peer = args.peer.unwrap_or_else(default_peer);
-    let addr = match bind_address("127.0.0.1", args.port) {
-        Ok(addr) => addr,
+    let probe = match Probe::bind(args.port) {
+        Ok(probe) => probe,
         Err(problem) => {
             eprintln!("parallax-probe: {problem}");
             return ExitCode::FAILURE;
         }
     };
 
-    let server = match tiny_http::Server::http(addr) {
-        Ok(server) => server,
-        Err(e) => {
-            eprintln!("parallax-probe: could not bind {addr}: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
     eprintln!(
-        "parallax-probe: {peer} serving {} project(s) on http://{addr}",
-        registry.projects().len()
+        "parallax-probe: {peer} serving {} project(s) on {}",
+        registry.projects().len(),
+        probe.url()
     );
-    serve(&server, &registry, &config, &peer);
+    probe.serve(&registry, &config, &peer);
     ExitCode::SUCCESS
 }
 

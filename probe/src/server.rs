@@ -104,12 +104,53 @@ fn answer(
     }
 }
 
-/// Serves until the listener dies.
-pub fn serve(server: &Server, registry: &Registry, config: &AdapterConfig, peer: &str) {
-    for request in server.incoming_requests() {
-        // One bad connection is not a reason to stop serving the other
-        // two machines.
-        let _ = answer(request, registry, config, peer);
+/// A bound probe.
+///
+/// Owns the listener so `tiny_http` does not appear in this crate's
+/// public API — which keeps the HTTP library a private choice, and lets
+/// an integration test bind a real port without taking a dependency on
+/// whichever library happens to be behind it.
+pub struct Probe {
+    server: Server,
+    addr: SocketAddr,
+}
+
+impl Probe {
+    /// Binds loopback on `port`.
+    ///
+    /// Port `0` asks the operating system for a free one and is what a
+    /// test wants — and what a second probe on one machine needs, which
+    /// is how two peers get exercised without two machines.
+    pub fn bind(port: u16) -> Result<Self, String> {
+        let requested = bind_address("127.0.0.1", port)?;
+        let server =
+            Server::http(requested).map_err(|e| format!("could not bind {requested}: {e}"))?;
+        // Re-read it rather than trusting `requested`: with port 0 the
+        // interesting number is the one the OS chose.
+        let addr = server
+            .server_addr()
+            .to_ip()
+            .ok_or_else(|| "listener has no IP address".to_string())?;
+        Ok(Self { server, addr })
+    }
+
+    /// The address actually bound.
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// The base URL a client would fetch from.
+    pub fn url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
+
+    /// Serves until the listener dies.
+    pub fn serve(&self, registry: &Registry, config: &AdapterConfig, peer: &str) {
+        for request in self.server.incoming_requests() {
+            // One bad connection is not a reason to stop serving the
+            // other two machines.
+            let _ = answer(request, registry, config, peer);
+        }
     }
 }
 

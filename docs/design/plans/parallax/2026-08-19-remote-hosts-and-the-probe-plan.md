@@ -225,6 +225,21 @@ degrading with the 404 its private repo actually returns.
 **Verified:** live against the running probe — `/health` returned `ok`,
 `/state` returned 4,416 bytes of valid `parallax/v1` JSON.
 
+**And now as the task originally asked.** That live `curl` was evidence,
+not a test; `probe/tests/serving.rs` binds an ephemeral loopback port,
+serves from it, and reads it back with the same `PeerClient` a cockpit
+uses — so the bytes, the JSON, and the re-stamping are exercised by the
+code that ships rather than by a stand-in. Six cases, including two
+probes at once (which is how the two-machine shape is reachable on one
+machine) and an empty machine, which must answer rather than be
+indistinguishable from an unreachable one.
+
+The probe became a library as well as a binary to allow it. `Probe` now
+owns its listener, so `tiny_http` no longer appears in the public API and
+`main.rs` is thinner — and `Probe::bind(0)` asks the OS for a free port,
+which is what makes the tests safe to run on a machine that is already
+serving a probe. On these machines, that is all of them.
+
 #### Task 8: The loopback refusal
 
 - [x] The bind address is not configurable. The probe binds `127.0.0.1` and nothing else.
