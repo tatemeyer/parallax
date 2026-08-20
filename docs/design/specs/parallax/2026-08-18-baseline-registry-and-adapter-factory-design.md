@@ -100,8 +100,8 @@ and a frontend's project rail must not reshuffle between refreshes.
 ```yaml
 apiVersion: parallax/v1
 projects:
-  - root: C:/Users/tatem/Dev/TTUI
-  - root: C:/Users/tatem/Dev/Model-Experiments
+  - root: C:/Users/you/Dev/TTUI
+  - root: C:/Users/you/Dev/Model-Experiments
 ```
 
 `root` is the only required key. A project's *name* comes from its own

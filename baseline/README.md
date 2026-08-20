@@ -73,7 +73,7 @@ Two calls, neither of which a frontend should have to write itself.
 registry file, or a scan of a directory holding sibling projects:
 
 ```rust
-let registry = Registry::scan(Path::new("C:/Users/tatem/Dev"));
+let registry = Registry::scan(Path::new("C:/Users/you/Dev"));
 // or: Registry::from_file(Path::new("~/.parallax/registry.yaml"))  <- caller expands the path
 ```
 

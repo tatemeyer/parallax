@@ -13,9 +13,9 @@ apiVersion: parallax/v1
 # `parallax.yaml`, which is checked in and gets cloned to different
 # paths on different machines.
 projects:
-  - root: C:/Users/tatem/Dev/Parallax
-  - root: C:/Users/tatem/Dev/TTUI
-  - root: C:/Users/tatem/Dev/SESH
+  - root: C:/Users/you/Dev/Parallax
+  - root: C:/Users/you/Dev/TTUI
+  - root: C:/Users/you/Dev/SESH
 
 # What is on the other machines. URLs, not inventories: the Pi knows
 # what is on the Pi, and a list here saying otherwise would be wrong the
@@ -29,10 +29,11 @@ projects:
 # — and its projects appear as `sesh@pi5`. A machine that does not answer
 # keeps its row and says why.
 peers:
-  - url: https://pi5.tail9e8086.ts.net
-  - url: https://tates-laptop.tail9e8086.ts.net
+  - url: https://pi5.tail-scale.ts.net
+  - url: https://tates-laptop.tail-scale.ts.net
 
-# This tailnet is `tail9e8086.ts.net`. To confirm, or for another one:
+# `tail-scale.ts.net` is a stand-in: every tailnet gets its own MagicDNS
+# suffix, and yours is not this one. To find it:
 #     tailscale status --json | jq -r .MagicDNSSuffix
 # or read it off `tailscale status`, which prints each machine's name.
 #

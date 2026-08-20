@@ -203,7 +203,7 @@ on each project entry.
 ```yaml
 apiVersion: parallax/v1
 projects:
-  - root: C:/Users/tatem/Dev/Parallax
+  - root: C:/Users/you/Dev/Parallax
 peers:
   - url: https://pi5.tail-scale.ts.net
   - url: https://laptop.tail-scale.ts.net

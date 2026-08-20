@@ -19,7 +19,7 @@ exists.
 ## Running it
 
 ```
-panopticon --projects-root C:/Users/tatem/Dev   # every sibling with a parallax.yaml
+panopticon --projects-root C:/Users/you/Dev   # every sibling with a parallax.yaml
 panopticon --registry ~/.parallax/registry.yaml # the roots a registry file lists
 panopticon --fixtures panopticon/fixtures       # recorded state, frozen clock
 ```
