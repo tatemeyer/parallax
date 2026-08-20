@@ -72,17 +72,48 @@ means fighting a linker, and a Pi 5 builds this crate in a couple of
 minutes.
 
 ```bash
+# Tailscale first — a probe nothing can reach is not serving anything.
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+
+# This repository is not on the Pi yet; SESH is at ~/sesh, so put it
+# beside it rather than under a Dev/ directory that does not exist here.
+git clone https://github.com/tatemeyer/parallax.git ~/parallax
+cd ~/parallax
+
 cargo build --release -p parallax-probe
 install -Dm755 target/release/parallax-probe ~/.local/bin/parallax-probe
 install -Dm644 probe/deploy/parallax-probe.service \
+  ~/.config/systemd/user/parallax-probe.service
+
+# The one line that differs per machine. On the Pi the checkouts sit
+# directly in the home directory, not under Dev/.
+sed -i 's|--projects-root %h/Dev|--projects-root %h|' \
   ~/.config/systemd/user/parallax-probe.service
 
 systemctl --user daemon-reload
 systemctl --user enable --now parallax-probe
 sudo loginctl enable-linger "$USER"
 
+# Confirm it found something before publishing it. An empty answer here
+# means the projects root is wrong, and looks identical to a machine
+# with nothing registered.
+curl -s 127.0.0.1:8737/state | head -c 200
+
 tailscale serve --bg --https=443 http://127.0.0.1:8737
 ```
+
+**If `tailscale serve --https` fails**, HTTPS certificates are not
+enabled for the tailnet — turn them on in the admin console under DNS,
+or publish over plain HTTP instead:
+
+```bash
+tailscale serve --bg --http=8737 http://127.0.0.1:8737
+```
+
+The tailnet is WireGuard end to end either way, so the plain-HTTP form
+is not sending anything in the clear; it only gives up the certificate.
+Peers then need the port in their URL: `http://pi5.<tailnet>:8737`.
 
 **`enable-linger` is the step that is easy to miss.** The probe is a
 *user* unit, like `seshd`, because the projects it scans live in this
@@ -107,7 +138,7 @@ apiVersion: parallax/v1
 projects:
   - root: C:/Users/tatem/Dev/Parallax
 peers:
-  - url: https://pi5.tail-scale.ts.net
+  - url: https://pi5.tail9e8086.ts.net
 ```
 
 ```

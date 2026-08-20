@@ -29,10 +29,10 @@ projects:
 # — and its projects appear as `sesh@pi5`. A machine that does not answer
 # keeps its row and says why.
 peers:
-  - url: https://pi5.tail-scale.ts.net
-  - url: https://tates-laptop.tail-scale.ts.net
+  - url: https://pi5.tail9e8086.ts.net
+  - url: https://tates-laptop.tail9e8086.ts.net
 
-# Replace `tail-scale.ts.net` with your own tailnet name:
+# This tailnet is `tail9e8086.ts.net`. To confirm, or for another one:
 #     tailscale status --json | jq -r .MagicDNSSuffix
 # or read it off `tailscale status`, which prints each machine's name.
 #
