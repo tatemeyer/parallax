@@ -18,7 +18,7 @@ pub struct WorkRow {
     pub implement: &'static str,
     /// What it takes to land, or `—`.
     pub merge: &'static str,
-    /// Whether "done" is defined.
+    /// Whether "done" is defined, or `—` when nothing claims.
     pub readiness: &'static str,
     /// Its checks, as `3/0/1` — passed, failed, pending — or blank when
     /// nothing reported any.
@@ -89,8 +89,9 @@ fn merge_of(a: &Autonomy) -> &'static str {
 
 fn readiness_of(a: &Autonomy) -> &'static str {
     match a.readiness {
-        Readiness::Verifiable => "verifiable",
-        Readiness::NeedsIntent => "needs-intent",
+        Some(Readiness::Verifiable) => "verifiable",
+        Some(Readiness::NeedsIntent) => "needs-intent",
+        None => "—",
     }
 }
 
@@ -152,7 +153,8 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].implement, "agent");
         assert_eq!(rows[0].merge, "on-checks");
-        assert_eq!(rows[0].readiness, "verifiable");
+        // `gated` claims two axes and says nothing about the third.
+        assert_eq!(rows[0].readiness, "—");
     }
 
     /// The case every TTUI issue is actually in today (see Parallax
@@ -168,8 +170,8 @@ mod tests {
         assert_eq!(rows[0].implement, "—");
         assert_eq!(rows[0].merge, "—");
         assert_eq!(
-            rows[0].readiness, "verifiable",
-            "readiness always lands somewhere"
+            rows[0].readiness, "—",
+            "an unclaimed readiness is not a verifiable one"
         );
     }
 

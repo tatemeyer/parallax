@@ -47,8 +47,10 @@ pub struct Autonomy {
     pub implement: Option<Implement>,
     /// What it takes to land. `None` means the label makes no claim.
     pub merge: Option<Merge>,
-    /// Whether "done" is defined. Defaults to `Verifiable`.
-    pub readiness: Readiness,
+    /// Whether "done" is defined. `None` means the label makes no
+    /// claim — which is not the same fact as "a criterion exists", and
+    /// the two must never be shown as one.
+    pub readiness: Option<Readiness>,
 }
 
 /// An `Autonomy` asserting nothing on either optional axis.
@@ -109,7 +111,7 @@ pub fn project(map: &AutonomyMap, label: &str) -> Option<Autonomy> {
     map.entry(label).map(|e| Autonomy {
         implement: e.implement,
         merge: e.merge,
-        readiness: e.readiness.unwrap_or_default(),
+        readiness: e.readiness,
     })
 }
 
@@ -137,6 +139,9 @@ pub fn resolve(map: &AutonomyMap, labels: &[String]) -> Resolution {
                 out.matched.push(label.clone());
                 out.autonomy.implement = most_restrictive(out.autonomy.implement, a.implement);
                 out.autonomy.merge = most_restrictive(out.autonomy.merge, a.merge);
+                // `None` sorts below every claim, so a label that says
+                // nothing about readiness cannot dilute one that does,
+                // and two claims resolve to the more conservative.
                 out.autonomy.readiness = out.autonomy.readiness.max(a.readiness);
             }
             None => out.unmapped.push(label.clone()),
@@ -228,7 +233,7 @@ mod projection_tests {
             Autonomy {
                 implement: Some(Implement::Agent),
                 merge: Some(Merge::DirectPush),
-                readiness: Readiness::Verifiable
+                readiness: None
             }
         );
     }
@@ -240,7 +245,7 @@ mod projection_tests {
             Autonomy {
                 implement: Some(Implement::Agent),
                 merge: Some(Merge::OnChecks),
-                readiness: Readiness::Verifiable
+                readiness: None
             }
         );
     }
@@ -252,7 +257,7 @@ mod projection_tests {
             Autonomy {
                 implement: Some(Implement::Agent),
                 merge: Some(Merge::HumanApproval),
-                readiness: Readiness::Verifiable
+                readiness: None
             }
         );
     }
@@ -264,7 +269,7 @@ mod projection_tests {
             Autonomy {
                 implement: Some(Implement::Agent),
                 merge: Some(Merge::OnChecks),
-                readiness: Readiness::Verifiable
+                readiness: None
             }
         );
     }
@@ -276,7 +281,7 @@ mod projection_tests {
             Autonomy {
                 implement: Some(Implement::Agent),
                 merge: Some(Merge::HumanApproval),
-                readiness: Readiness::Verifiable
+                readiness: None
             }
         );
     }
@@ -290,7 +295,7 @@ mod projection_tests {
             Autonomy {
                 implement: Some(Implement::HumanOnly),
                 merge: None,
-                readiness: Readiness::Verifiable
+                readiness: None
             }
         );
     }
@@ -304,7 +309,7 @@ mod projection_tests {
             Autonomy {
                 implement: None,
                 merge: None,
-                readiness: Readiness::NeedsIntent
+                readiness: Some(Readiness::NeedsIntent)
             }
         );
     }
@@ -388,7 +393,7 @@ mod resolution_tests {
         let r = resolve(&me_map(), &labels(&["autonomy:safe", "needs-intent"]));
         assert_eq!(r.autonomy.implement, Some(Implement::Agent));
         assert_eq!(r.autonomy.merge, Some(Merge::OnChecks));
-        assert_eq!(r.autonomy.readiness, Readiness::NeedsIntent);
+        assert_eq!(r.autonomy.readiness, Some(Readiness::NeedsIntent));
     }
 
     #[test]
@@ -430,6 +435,33 @@ mod resolution_tests {
         let r = resolve(&me_map(), &labels(&["needs-intent", "autonomy:safe"]));
         assert_eq!(r.matched, labels(&["needs-intent", "autonomy:safe"]));
     }
+    /// The regression test for a defect a blinded perceptual lens found
+    /// on screen before any unit test did: `resolve` used to
+    /// `unwrap_or_default()` this axis, so every work item nobody had
+    /// said anything about was displayed as `verifiable` — the platform
+    /// asserting that "done" was defined for work whose labels define
+    /// nothing. Two axes obeyed the honest-state rule and the third
+    /// quietly did not.
+    #[test]
+    fn readiness_asserts_nothing_until_a_label_claims_it() {
+        assert_eq!(no_claim().readiness, None);
+        // TTUI's three tiers say nothing about readiness, so no item of
+        // TTUI's can resolve to a readiness claim.
+        for tier in ["direct", "gated", "human"] {
+            assert_eq!(
+                resolve(&ttui_map(), &labels(&[tier])).autonomy.readiness,
+                None,
+                "`{tier}` claims a readiness it never declared"
+            );
+        }
+        // And a label that does claim one still carries it through.
+        assert_eq!(
+            resolve(&me_map(), &labels(&["needs-intent"]))
+                .autonomy
+                .readiness,
+            Some(Readiness::NeedsIntent)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -463,16 +495,11 @@ mod tests {
     }
 
     #[test]
-    fn readiness_defaults_to_verifiable() {
-        assert_eq!(Readiness::default(), Readiness::Verifiable);
-        assert_eq!(no_claim().readiness, Readiness::Verifiable);
-    }
-
-    #[test]
-    fn no_claim_asserts_nothing_on_the_two_optional_axes() {
+    fn no_claim_asserts_nothing_on_any_axis() {
         let a = no_claim();
         assert_eq!(a.implement, None);
         assert_eq!(a.merge, None);
+        assert_eq!(a.readiness, None);
     }
 
     /// Restrictiveness ordering is what multi-label resolution (Task 4)

@@ -15,9 +15,13 @@ scenarios:
       A project rail on the left lists ttui and sesh, each with a health
       glyph. The centre pane shows ttui's work in flight: issue and pull
       request numbers, their state, three autonomy columns, check counts,
-      and titles. Every autonomy column reads as an em dash, because
-      TTUI's manifest declares no autonomy map — that is correct, not a
-      rendering failure. A footer across the bottom lists each source and
-      how current it is.
+      and titles. All three autonomy columns read as an em dash on every
+      row, because TTUI's tiers claim an implement and a merge policy and
+      say nothing about readiness — that is correct, not a rendering
+      failure. A title too long for the pane ends in `...`; one that fits
+      is shown whole. A footer across the bottom lists each source and
+      how current it is, and when it raises a blocker it names which
+      project the blocker belongs to. The final frame differs from the
+      one before it: the selection has moved down one row.
     touches:
       - panopticon/src/**

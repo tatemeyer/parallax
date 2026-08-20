@@ -8,7 +8,7 @@ use parallax_baseline::adapters::verification::{
     CommandOutput, ScriptedRunner, VerificationOutcome,
 };
 use parallax_baseline::adapters::work::{check_runs_url, issues_url, pulls_url, GithubWorkAdapter};
-use parallax_baseline::autonomy::{no_claim, Implement, Merge, Readiness};
+use parallax_baseline::autonomy::{no_claim, Implement, Merge};
 use parallax_baseline::freshness::Freshness;
 use parallax_baseline::manifest::parse_manifest_file;
 use parallax_baseline::state::{aggregate, aggregate_project, ProjectAdapters};
@@ -228,10 +228,10 @@ fn a_label_ttui_does_not_declare_is_reported_as_unmapped() {
     assert!(state.unmapped_labels.contains(&"semver:minor".to_string()));
     let item_141 = state.autonomy.iter().find(|a| a.number == 141).unwrap();
     assert!(item_141.resolution.matched.is_empty());
-    assert_eq!(
-        item_141.resolution.autonomy.readiness,
-        Readiness::Verifiable
-    );
+    // Nothing matched, so nothing is claimed — on every axis. This used
+    // to read `Verifiable`, which asserted that "done" was defined for
+    // an item whose labels define nothing.
+    assert_eq!(item_141.resolution.autonomy.readiness, None);
 }
 
 #[test]

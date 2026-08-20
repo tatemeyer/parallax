@@ -160,12 +160,15 @@ fn render_detail(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer)
         return;
     };
 
-    let lines = match frame.tab {
+    let lines: Vec<String> = match frame.tab {
         Tab::Work => work_lines(frame, project),
         Tab::Verification => verification_lines(frame, project),
         Tab::Artifacts => artifact_lines(project),
         Tab::Sessions => session_lines(frame, project),
-    };
+    }
+    .iter()
+    .map(|line| elide(line, inner.width))
+    .collect();
     List::new(&lines, frame.detail_selected).render(inner, buf);
 }
 
@@ -261,12 +264,8 @@ fn session_lines(frame: &Frame<'_>, project: &ProjectState) -> Vec<String> {
 /// trustworthy, so it never scrolls and never drops a row silently — it
 /// says how many it could not fit.
 fn render_footer(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer) {
-    let title = if frame.alarm {
-        "SOURCES  ** BLOCKER **"
-    } else {
-        "SOURCES"
-    };
-    let inner = Block::new().title(title).theme(theme).render(area, buf);
+    let title = footer_title(frame);
+    let inner = Block::new().title(&title).theme(theme).render(area, buf);
     let Some(project) = frame.project() else {
         return;
     };
@@ -277,6 +276,55 @@ fn render_footer(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer)
     }
     let line = footer_line(&cells, inner.width);
     put_str(buf, inner.x, inner.y, &line, &inner);
+}
+
+/// Cuts a line to the pane and says that it did.
+///
+/// The same rule the footer already follows, applied to the one place
+/// that was not following it: a title clipped flush against the border
+/// is indistinguishable from a title that simply ended there, so the
+/// operator cannot tell a whole sentence from half of one. `...` rather
+/// than `…` deliberately — the ellipsis codepoint has no glyph in the
+/// rasterizer the perceptual tier captures through, and a cockpit that
+/// cannot be captured cannot be judged.
+fn elide(line: &str, width: u16) -> String {
+    const MARK: &str = "...";
+    let width = width as usize;
+    if line.chars().count() <= width {
+        return line.to_string();
+    }
+    // Too narrow to say anything and mark it: the mark wins, because
+    // "there is more here" outranks three characters of the more.
+    if width <= MARK.len() {
+        return MARK.chars().take(width).collect();
+    }
+    let keep = width - MARK.len();
+    line.chars().take(keep).chain(MARK.chars()).collect()
+}
+
+/// The footer's title, naming whose blocker it is.
+///
+/// The box below it holds the *selected* project's sources, but the
+/// bell rings for the platform — so an unmodified banner puts
+/// `** BLOCKER **` over a healthy project's sources with nothing on
+/// screen to account for it. Naming the projects turns a warning the
+/// operator has to go looking for into one they can act on.
+fn footer_title(frame: &Frame<'_>) -> String {
+    if !frame.alarm {
+        return "SOURCES".to_string();
+    }
+    let broken: Vec<String> = model::rail_rows(frame.platform, frame.now)
+        .into_iter()
+        .filter(|r| r.health == Health::Broken)
+        .map(|r| r.name)
+        .collect();
+    if broken.is_empty() {
+        // The bell outlasts the fire by design, so it can still be
+        // ringing once every project has recovered. Claiming a project
+        // is broken when none is would be its own dishonesty.
+        return "SOURCES  ** BLOCKER **".to_string();
+    }
+    format!("SOURCES  ** BLOCKER: {} **", broken.join(", "))
 }
 
 /// Joins source cells into one line, and says plainly how many did not

@@ -61,25 +61,25 @@ fn every_row_of_the_projection_table_holds_for_the_real_manifests() {
     let me = load("model-experiments.yaml");
     let me_map = &me.manifest().work.as_ref().unwrap().autonomy_map;
 
-    type Row = (&'static str, Option<Implement>, Option<Merge>, Readiness);
+    type Row = (
+        &'static str,
+        Option<Implement>,
+        Option<Merge>,
+        Option<Readiness>,
+    );
     let ttui_rows: Vec<Row> = vec![
         (
             "direct",
             Some(Implement::Agent),
             Some(Merge::DirectPush),
-            Readiness::Verifiable,
+            None,
         ),
-        (
-            "gated",
-            Some(Implement::Agent),
-            Some(Merge::OnChecks),
-            Readiness::Verifiable,
-        ),
+        ("gated", Some(Implement::Agent), Some(Merge::OnChecks), None),
         (
             "human",
             Some(Implement::Agent),
             Some(Merge::HumanApproval),
-            Readiness::Verifiable,
+            None,
         ),
     ];
     let me_rows: Vec<Row> = vec![
@@ -87,21 +87,16 @@ fn every_row_of_the_projection_table_holds_for_the_real_manifests() {
             "autonomy:safe",
             Some(Implement::Agent),
             Some(Merge::OnChecks),
-            Readiness::Verifiable,
+            None,
         ),
         (
             "autonomy:review",
             Some(Implement::Agent),
             Some(Merge::HumanApproval),
-            Readiness::Verifiable,
-        ),
-        (
-            "autonomy:human",
-            Some(Implement::HumanOnly),
             None,
-            Readiness::Verifiable,
         ),
-        ("needs-intent", None, None, Readiness::NeedsIntent),
+        ("autonomy:human", Some(Implement::HumanOnly), None, None),
+        ("needs-intent", None, None, Some(Readiness::NeedsIntent)),
     ];
 
     for (map, rows) in [(ttui_map, ttui_rows), (me_map, me_rows)] {

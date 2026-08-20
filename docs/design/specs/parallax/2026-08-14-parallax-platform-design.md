@@ -235,17 +235,36 @@ merge:      on-checks | human-approval | direct-push
 readiness:  verifiable | needs-intent   is "done" even defined yet
 ```
 
+Every axis is optional, and `—` means *this label makes no claim* on
+that axis. `—` is never a synonym for a value: "nobody said" and
+"somebody said `verifiable`" are different facts about a piece of work,
+and the platform's whole purpose is to keep them apart.
+
 Projected:
 
 | Native label | implement | merge | readiness |
 |---|---|---|---|
-| TTUI `Direct` | agent | direct-push | verifiable |
-| TTUI `Gated` | agent | on-checks | verifiable |
-| TTUI `Human` | agent | human-approval | verifiable |
-| ME `autonomy:safe` | agent | on-checks | verifiable |
-| ME `autonomy:review` | agent | human-approval | verifiable |
-| ME `autonomy:human` | human-only | — | verifiable |
+| TTUI `Direct` | agent | direct-push | — |
+| TTUI `Gated` | agent | on-checks | — |
+| TTUI `Human` | agent | human-approval | — |
+| ME `autonomy:safe` | agent | on-checks | — |
+| ME `autonomy:review` | agent | human-approval | — |
+| ME `autonomy:human` | human-only | — | — |
 | ME `needs-intent` | — | — | needs-intent |
+
+**Amended 2026-08-20.** The readiness column above read `verifiable` on
+its first six rows. That was wrong, and wrong in the specific way this
+document spends most of its length warning against: not one of those
+labels says anything about readiness, so the table was asserting a
+comforting default on their behalf. The implementation faithfully
+reproduced it — `Autonomy::readiness` was not an `Option` and `resolve`
+called `unwrap_or_default()` — and every unlabelled work item in the
+platform was therefore displayed as having a defined success criterion.
+
+It was found by a blinded perceptual lens looking at a screenshot of the
+cockpit, which counted two em dashes in a row the scenario's intent
+statement said should hold three. No unit test caught it, because the
+tests asserted the table.
 
 Two asymmetries become visible immediately, which is the point: **ME has
 no direct-push tier** (nothing bypasses CI), and **TTUI has no

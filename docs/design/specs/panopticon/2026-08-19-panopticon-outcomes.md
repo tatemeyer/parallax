@@ -110,13 +110,70 @@ is the only design rule here that paid for itself repeatedly:
 4. The first bell observation never rings, because a cockpit starting
    up in front of a fire is not news.
 
+## What the perceptual tier found (run `20260820T020000Z`)
+
+The cockpit was captured and put through three blinded lenses —
+`breakage`, `intent`, and `motion`, each seeing only the image and the
+run manifest. Verdict: **GO**, six findings, no blockers. All six were
+fixed rather than filed, and the four distinct defects behind them are
+worth recording because of what found them.
+
+**`readiness` could not say "nothing claimed".** The intent lens counted
+two em dashes in a row whose declared intent said three, and asked
+whether the third column was blank or whether `verifiable` *was* the
+third column. It was the latter: `Autonomy::readiness` was a
+`Readiness`, not an `Option<Readiness>`, and `resolve` finished with
+`unwrap_or_default()`. Two axes obeyed the honest-state rule; the third
+quietly asserted that "done" was defined for every work item nobody had
+said anything about — including all four of TTUI's, on screen, in the
+demo. The master design's own table
+(`../parallax/2026-08-14-parallax-platform-design.md`) said `verifiable`
+on six rows that declare no readiness, and the code was faithful to it,
+and the unit tests asserted the table. One of them was even named
+`an_item_whose_labels_are_all_unmapped_renders_dashes` and asserted
+`readiness == "verifiable"` with the comment *"readiness always lands
+somewhere"*. The spec, the type, the render and the test all agreed with
+each other and none of them agreed with the design rule they were there
+to enforce. What broke the loop was that the lens could not read any of
+them.
+
+**Titles were clipped with no marker.** Flagged independently by
+`breakage` and `intent`: `#141`'s title ended `…do with a singl`, flush
+against the border, indistinguishable from a title that simply ended
+there. The footer had solved exactly this problem — it reserves room to
+say `(+3)` rather than hide that it hid anything — and the detail pane
+was not doing it. Now every over-wide line ends in `...`; ASCII
+deliberately, because U+2026 has no glyph in the rasterizer the
+perceptual tier captures through, and a cockpit that cannot be captured
+cannot be judged.
+
+**The blocker banner was not attributable.** `motion` noticed a
+`** BLOCKER **` raised over `sesh`'s sources while `sesh` was selected,
+healthy, and showing nothing in flight — the fire was `ttui`'s. The bell
+rings for the platform; the box below it holds one project's sources.
+The banner now names the projects: `** BLOCKER: ttui **`, and falls back
+to the bare word only when the bell is still ringing after every project
+has recovered, which it can be, by design.
+
+**A quarter of the capture was a duplicate frame.** `breakage` and
+`motion` both observed frames 3 and 4 to be pixel-identical: the script
+ended on a `wait_ms` after the screen had already settled. The last step
+is now a keypress that moves the selection, so every frame in the sheet
+differs from the one before it. A scenario that spends a frame on
+nothing is paying a lens to look at nothing.
+
+The tier justified itself here. Three of the four are things a person
+would notice in a screenshot and no test would ever assert, and the
+fourth is a design defect that four layers of the stack agreed on
+because they were all reading each other.
+
 ## What is deliberately still missing
 
 - **No control.** Nothing here mutates anything, asserted by
   `tests/read_only.rs`. That is sub-project #5.
 - **No figure previews or 3D surfaces.** Metric series render as text
   today; the artifact pane names them. That is sub-project #4.
-- **No Plumb verdict on the cockpit itself.** The capture works and the
-  scenario is committed at `.plumb/config.yaml`; dispatching the four
-  blinded lenses is a separate, operator-initiated act.
+- **No `design` lens.** Parallax has no `.plumb/taste.md`, so the lens
+  that judges against a declared aesthetic is skipped every run. That is
+  a taste call and not one this document can make.
 - **No help overlay.** `?` toggles a flag nothing renders yet.
