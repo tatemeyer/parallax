@@ -11,9 +11,19 @@ scenarios:
     size: 120x30
     script: .plumb/scripts/cockpit-work.json
     intent: >
-      The Parallax cockpit, showing recorded state with a frozen clock.
-      A project rail on the left lists ttui and sesh, each with a health
-      glyph. The centre pane shows ttui's work in flight: issue and pull
+      The Parallax cockpit, showing recorded state with a frozen clock,
+      across two machines.
+      A project rail on the left lists three rows, each with a health
+      glyph: `sesh` and `ttui` read from this machine, and a third from a
+      recorded peer. The peer's row is qualified with the machine it is
+      on — `ttui@tates...`, ending in an ellipsis because the rail is
+      narrower than the whole name — and that suffix is the only thing
+      distinguishing it from the local `ttui` directly above it, which is
+      the entire reason it is there. In the first frame, before the peer
+      has answered, that row instead carries the machine's own name and a
+      pending glyph rather than an ok one: a machine nobody has heard
+      from has reported nothing, and nothing is not good news.
+      The centre pane shows ttui's work in flight: issue and pull
       request numbers, their state, three autonomy columns, check counts,
       and titles. All three autonomy columns read as an em dash on every
       row, because TTUI's tiers claim an implement and a merge policy and

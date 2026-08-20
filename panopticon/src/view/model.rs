@@ -74,8 +74,21 @@ impl Declared {
 /// concluded. A project that declares nothing is `Ok` — it has no bad
 /// news, and inventing some would be a lie.
 pub fn health(project: &ProjectState, now: SystemTime) -> Health {
-    let sources_say = project
-        .sources(now)
+    let sources = project.sources(now);
+
+    // A peer's row with no sources at all means something different from
+    // a local project's. A local project that declares nothing **was
+    // read**, and found to declare nothing; there is genuinely no bad
+    // news. A remote row with nothing on it has not been heard from —
+    // it exists because a registry named the machine, not because
+    // anything answered. Reporting `Ok` would claim a check that never
+    // happened, which is the same species of lie as a fetched value
+    // calling itself `Live`.
+    if project.peer.is_some() && sources.is_empty() {
+        return Health::Pending;
+    }
+
+    let sources_say = sources
         .into_iter()
         .map(|s| match s.freshness {
             Freshness::Unavailable { .. } => Health::Broken,
@@ -134,6 +147,31 @@ mod tests {
     fn a_project_with_nothing_declared_is_ok_rather_than_unknown() {
         let p = bare_project("empty");
         assert_eq!(health(&p, at(0)), Health::Ok);
+    }
+
+    /// The same emptiness means the opposite thing on a peer's row. A
+    /// local project with no sources was read and found to declare
+    /// none; a machine that has not answered yet has told us nothing at
+    /// all, and `ok` there is a check that never happened.
+    #[test]
+    fn a_peer_that_has_not_answered_yet_is_pending_rather_than_ok() {
+        let mut state = PlatformState::default();
+        state.extend_from_peer("pi5", vec![bare_project("pi5")]);
+        assert_eq!(health(&state.projects[0], at(0)), Health::Pending);
+    }
+
+    /// And once it has answered, its rows are judged on what it said —
+    /// the rule above must not make every remote row permanently amber.
+    #[test]
+    fn a_peer_that_answered_is_judged_on_what_it_sent() {
+        let mut state = PlatformState::default();
+        state.extend_from_peer(
+            "pi5",
+            vec![project_with(|p| {
+                p.verification = vec![polled(check("tests", VerificationOutcome::Pass), at(0))];
+            })],
+        );
+        assert_eq!(health(&state.projects[0], at(0)), Health::Ok);
     }
 
     #[test]
