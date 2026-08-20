@@ -38,7 +38,7 @@ bound to local disk.
 **Command execution has a seam.** `CommandRunner`
 (`adapters/verification.rs:87`) is a single trait taking a command and a
 `cwd`, injected through `from_manifest_with`'s runner factory. Better
-still, `LocalProcessControl` (`actions/process.rs:22`) routes through
+still, `LocalProcessControl` (`actions/process.rs:19`) routes through
 the same trait rather than reaching for `std::process` a second time.
 One implementation would move both verification and control.
 
@@ -112,7 +112,7 @@ pub struct StateEnvelope {
 
 ### An observation is re-stamped on receipt
 
-`Observed::freshness` (`freshness.rs:64`) maps `SourceKind::Watched` to
+`Observed::freshness` (`freshness.rs:66`) maps `SourceKind::Watched` to
 `Freshness::Live` with no age check. That is exactly right for a
 filesystem read — the value was true at the moment it was read — and it
 becomes false the instant that read happened on another machine. Every
