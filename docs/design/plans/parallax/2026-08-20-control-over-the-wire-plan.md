@@ -109,30 +109,52 @@ panopticon/src/
 
 #### Task 1: `actions::wire`
 
-- [ ] `ActionId` — an opaque client-generated string, with a constructor that takes the bytes rather than inventing them, so no test needs a random source.
-- [ ] `ActionRequest { api_version, id, requested_by, action, confirmed }` — `confirmed` is `Option<String>`, a fingerprint, **never a `Confirmation`**.
-- [ ] `Submitted { Accepted { id }, Refused { reason }, Unknown { id, reason } }` — no `is_ok`, no `Result` conversion, documented as to why.
-- [ ] `ActionStatus { Running, Done { summary }, Refused { reason }, NotSubmitted }` plus the envelope's `started_at`.
-- [ ] Unknown fields ignored, matching `wire.rs`'s rule and for the same reason.
-- [ ] Round-trip tests for every variant.
+**Revised during implementation.** Two corrections, both making the
+design more honest rather than less.
+
+*`ActionStatus` gained `Failed`.* An action that ran and failed is a
+**real answer** — there is nothing uncertain about a merge conflict —
+and folding it into `Refused` (never ran) or into the unknown would have
+lost exactly the distinction this arc is about.
+
+*The restart marker is an identity, not a timestamp.* The spec had the
+envelope carry `started_at` and the client compare it to when it
+submitted. That is a comparison between two machines' wall clocks, which
+the previous arc forbids for good reason — the Pi has no RTC. A
+`ProbeRun` token identifies one run of one process and needs no clock at
+all. See Task 8.
+
+- [x] `ActionId` — an opaque client-generated string, with a constructor that takes the bytes rather than inventing them, so no test needs a random source.
+- [x] `ActionRequest { api_version, id, requested_by, action, confirmed }` — `confirmed` is `Option<String>`, a fingerprint, **never a `Confirmation`**.
+- [x] `Submitted { Accepted { id }, Refused { reason }, Unknown { id, reason } }` — no `is_ok`, no `Result` conversion, documented as to why.
+- [x] `ActionStatus { Running, Done { summary }, Refused { reason }, NotSubmitted }` plus the envelope's `started_at`.
+- [x] Unknown fields ignored, matching `wire.rs`'s rule and for the same reason.
+- [x] Round-trip tests for every variant.
 
 #### Task 2: The confirmation crosses as a fingerprint
 
-- [ ] `ActionRequest::confirming(action, confirmation)` builds the request from the pair the operator actually approved.
-- [ ] `ActionRequest::confirmation()` rebuilds a `Confirmation` from the carried fingerprint, so the probe calls the existing `authorize` unchanged.
-- [ ] Test: a request built for "merge #12" and edited to name #99 is refused by `authorize` as a mismatch, over the wire types, not just locally.
+**Revised during implementation.** The plan called for rebuilding a
+`Confirmation` from the carried fingerprint, which would have needed a
+second constructor on a type whose entire value is having exactly one.
+Unnecessary: having checked that the carried fingerprint is the one the
+action hashes to, `Confirmation::of(&action)` produces that same value
+from the action itself. The wire needs no back door.
+
+- [x] `ActionRequest::new(id, requested_by, action, confirmation)` builds the request from the pair the operator actually approved.
+- [x] `authorize_here` checks the carried fingerprint against the action's before authorizing — no `Confirmation::from_fingerprint` was added.
+- [x] Test: a request built for "merge #12" and edited to name #99 is refused by `authorize` as a mismatch, over the wire types, not just locally.
 
 ### Slice 1.2: The honesty rule
 
 #### Task 3: The executing machine's classification wins
 
-- [ ] `ActionRequest::authorize_here()` — resolves the confirmation and calls `authorize` with the *local* `Reversibility` table.
-- [ ] Test, named for the claim: every member of the confirmation-required group, submitted with no confirmation, is refused whatever the client believed.
+- [x] `ActionRequest::authorize_here()` — resolves the confirmation and calls `authorize` with the *local* `Reversibility` table.
+- [x] Test, named for the claim: every member of the confirmation-required group, submitted with no confirmation, is refused whatever the client believed.
 
 #### Task 4: A lost answer is `Unknown`
 
-- [ ] Test: a transport that errors after the request is written yields `Submitted::Unknown` carrying the id, never `Refused`.
-- [ ] Test: `Unknown` cannot be collapsed — asserted by the absence of `is_ok`/`From<Submitted> for Result`, as a compile-fail doc test beside the one guarding `Authorized`.
+- [x] Test: a transport that errors after the request is written yields `Submitted::Unknown` carrying the id, never `Refused`.
+- [x] Test: `Unknown` cannot be collapsed — asserted by the absence of `is_ok`/`From<Submitted> for Result`, as a compile-fail doc test beside the one guarding `Authorized`.
 
 ---
 
@@ -142,69 +164,97 @@ panopticon/src/
 
 #### Task 5: `probe::control`
 
-- [ ] `Ledger { started_at, entries: VecDeque<(ActionId, ActionStatus)>, bound: 256 }`.
-- [ ] `record`, `status`, and eviction from the front at the bound.
-- [ ] Test: an id never seen, with the ledger young, is `NotSubmitted`.
+- [x] `Ledger { started_at, entries: VecDeque<(ActionId, ActionStatus)>, bound: 256 }`.
+- [x] `record`, `status`, and eviction from the front at the bound.
+- [x] Test: an id never seen, with the ledger young, is `NotSubmitted`.
 
 #### Task 6: The worker
 
-- [ ] A `std::thread` and a channel; `submit` enqueues and returns immediately.
-- [ ] Test: a blocking executor still yields a response — the submission is not the execution.
-- [ ] Test: the same id twice records one call on a `RecordingExecutor`, and the second answer reports the first's outcome.
+- [x] A `std::thread` and a channel; `submit` enqueues and returns immediately.
+- [x] Test: a blocking executor still yields a response — the submission is not the execution.
+- [x] Test: the same id twice records one call on a `RecordingExecutor`, and the second answer reports the first's outcome.
 
 ### Slice 2.2: Serving
 
 #### Task 7: The two routes
 
-- [ ] `POST /action` and `GET /action/{id}` in `route`, with the existing table's shape.
-- [ ] The probe resolves the project in **its own** registry; an unknown name is refused by name.
-- [ ] A qualified name (`pi5/sesh`) is refused as a client that failed to strip its own view.
+- [x] `POST /action` and `GET /action/{id}` in `route`, with the existing table's shape.
+- [x] The probe resolves the project in **its own** registry; an unknown name is refused by name.
+- [x] A qualified name (`pi5/sesh`) is refused as a client that failed to strip its own view.
 
 #### Task 8: A restart is not `not-submitted`
 
-- [ ] The envelope carries `started_at`; the client compares it to when it submitted.
-- [ ] Test named for the trap: submit, rebuild the ledger with a later `started_at`, ask again — `Unknown`, and the reason names the restart.
+**Revised during implementation:** by run identity rather than by clock.
+See Task 1.
+
+- [x] Every reply carries the probe's `ProbeRun`; the client reads a `not-submitted` against the run that accepted the action.
+- [x] Test named for the trap: submit, rebuild the ledger with a later `started_at`, ask again — `Unknown`, and the reason names the restart.
 
 #### Task 9: Eviction is not `not-submitted` either
 
-- [ ] Test: overflow the bound, ask about the first id, get `Unknown`.
+- [x] Test: overflow the bound, ask about the first id, get `Unknown`.
 
 ### Slice 2.3: Opt-in
 
 #### Task 10: `--allow-control`
 
-- [ ] Off by default. `POST /action` without it is `403` naming the flag, refused at the route before the body is read.
-- [ ] Test: `/state` still serves with control off.
-- [ ] Test: `GET /state` runs no `Execute` adapter **with control on**.
+- [x] Off by default. `POST /action` without it is `403` naming the flag, refused at the route before the body is read.
+- [x] Test: `/state` still serves with control off.
+- [x] Test: `GET /state` runs no `Execute` adapter **with control on**.
 
 #### Task 11: The audit line
 
-- [ ] Every accepted action logs id, action summary, and `requested_by` **labelled as a claim**.
-- [ ] Test: the sink is injected, and records the claim verbatim.
+- [x] Every accepted action logs id, action summary, and `requested_by` **labelled as a claim**.
+- [x] Test: the sink is injected, and records the claim verbatim.
 
 ---
 
 ## Arc 3: The cockpit routes
 
+**Revised during implementation: a courier thread, not the refresh
+thread.** The plan assumed submissions would ride the existing refresh
+cycle. Two things ruled that out, and the second is the one that
+decided it.
+
+`tests/read_only.rs` encodes that observation may not name an action,
+and names the refresh thread as observation. Putting control there would
+have meant deleting that guarantee rather than keeping it.
+
+And it would have been slow in the way that matters. A read sweep walks
+every project and then every peer, and an asleep peer costs the connect
+timeout — so `m` pressed at the wrong moment would have waited behind
+two dead machines before being *sent*. A keystroke that acts must not
+queue behind a poll that only looks.
+
+`panopticon/src/courier.rs` is that thread, and it joins the read-only
+exemption list with the argument written down beside it.
+
+**Also revised: a `Target`, not a destination per row.** Local rows sit
+still in registry order, but a peer's rows arrive and leave as that
+machine answers — a destination looked up by row number means something
+different one frame later. The machine is named instead, and the target
+travels with the prompt so an answer cannot land on a machine the
+operator was not asked about.
+
 #### Task 12: `RemoteExecutor`
 
-- [ ] In `baseline/src/actions/remote.rs`, over `HttpTransport`, so `FixtureTransport` records a submission exactly as it records a fetch.
-- [ ] Short timeouts — the only thing being waited on is "I have this".
+- [x] In `baseline/src/actions/remote.rs`, over `HttpTransport`, so `FixtureTransport` records a submission exactly as it records a fetch.
+- [x] Short timeouts — the only thing being waited on is "I have this".
 
 #### Task 13: Route instead of refuse
 
-- [ ] `app.rs` consults the row's peer and picks an executor; the refusal survives for a peer with no control.
-- [ ] Test: the old refusal test becomes a routing test, and a *new* refusal test covers a control-disabled peer.
+- [x] `app.rs` consults the row's peer and picks an executor; the refusal survives for a peer with no control.
+- [x] Test: the old refusal test becomes a routing test, and a *new* refusal test covers a control-disabled peer.
 
 #### Task 14: The prompt names the machine
 
-- [ ] A remote action's prompt says which machine it will run on; a local one does not gain noise.
-- [ ] Test both halves.
+- [x] A remote action's prompt says which machine it will run on; a local one does not gain noise.
+- [x] Test both halves.
 
 #### Task 15: `Unknown` in the log
 
-- [ ] Its own rendering, neither `ok` nor error, naming the machine and quoting the action.
-- [ ] Test: the entry for an `Unknown` is not marked `ok` and does not read as a failure.
+- [x] Its own rendering, neither `ok` nor error, naming the machine and quoting the action.
+- [x] Test: the entry for an `Unknown` is not marked `ok` and does not read as a failure.
 
 ---
 
@@ -212,16 +262,35 @@ panopticon/src/
 
 #### Task 16: Deployment
 
-- [ ] The unit file gains the flag, commented so the decision is visible.
-- [ ] `probe/README.md` documents enabling control and what it costs.
+- [x] The unit file gains the flag, commented so the decision is visible.
+- [x] `probe/README.md` documents enabling control and what it costs.
 
 #### Task 17: Perceptual
 
-- [ ] A Plumb scenario for the remote prompt, the `unknown` entry, and the control-disabled refusal.
+**Only partly done, and the rest is a question rather than an
+omission.** The control-disabled refusal is captured: `cockpit-peer`
+already drives it, and its intent was rewritten, because the refusal it
+described word for word is not the refusal the cockpit now gives.
+
+The remote prompt and the `unknown` log entry **cannot** be captured as
+things stand. Both need a cockpit that has submitted something, and
+fixture mode builds no courier — which the spec lists as a non-goal in
+as many words: "a recorded cockpit stays inert". Capturing them means
+either pointing a recorded cockpit at a real machine, which is the demo
+with a loaded weapon the fixture rule exists to prevent, or giving
+fixture mode a *recorded* submitter over `FixtureTransport`, exactly as
+peers already work — which cannot reach any machine and would be
+deterministic.
+
+The second is probably right and is not this arc's to decide, because it
+amends an approved non-goal. Raised as open question 4 on the spec.
+
+- [x] The control-disabled refusal, in `cockpit-peer`, with its intent corrected.
+- [ ] The remote prompt and the `unknown` entry — blocked on the question above.
 
 #### Task 18: The roadmap
 
-- [ ] `panopticon` and `probe` gain the arc; the README's refusal sentence is retired.
+- [x] `panopticon` and `probe` gain the arc; the README's refusal sentence is retired.
 
 ---
 

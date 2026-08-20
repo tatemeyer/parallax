@@ -20,7 +20,10 @@ Model-Experiments views are still sketched.
 The platform spans machines as of the remote-hosts arc: TTUI is
 developed on a laptop, this repository on a desktop, and SESH on a
 Raspberry Pi 5 that builds on itself. Each runs a probe; whichever
-machine you are sitting at is the cockpit.
+machine you are sitting at is the cockpit. A probe started with
+`--allow-control` can also be *acted* on from there — merging the Pi's
+pull request without walking to the Pi — and one started without it can
+only be watched, which is the default.
 
 ## Repository layout
 
@@ -37,9 +40,10 @@ machine you are sitting at is the cockpit.
   Headless — it never touches a terminal. See
   [`baseline/README.md`](baseline/README.md).
 - **`probe/`** — serves one machine's state so a cockpit on another can
-  see it. Binds loopback only and is published to the tailnet by
-  `tailscale serve`. Headless, and it never links a cockpit. See
-  [`probe/README.md`](probe/README.md).
+  see it, and — only when started with `--allow-control` — runs actions
+  that machine is asked to take. Binds loopback only and is published to
+  the tailnet by `tailscale serve`. Headless, and it never links a
+  cockpit. See [`probe/README.md`](probe/README.md).
 - **`plumb/`** — a Claude Code plugin: capture a terminal UI, then judge
   it. See [`plumb/README.md`](plumb/README.md).
   - `plumb/capture/` — the Rust CLI: capture adapters, contact sheets,
@@ -77,8 +81,8 @@ Named components, each carrying arcs, each arc its own spec → plan cycle.
 |---|---|---|---|
 | `plumb` | perceptual verification | — | shipped through Arc 5 |
 | `baseline` | manifests, registry, adapters, state, actions, the wire contract | — | shipped through Arc 7, plus remote hosts |
-| `panopticon` | the cockpit | `baseline`, `ttui` | shipped: observe, then control, then peers |
-| `probe` | serves one machine's state to the tailnet | `baseline` | shipped: the wire, the probe, peers, the merge |
+| `panopticon` | the cockpit | `baseline`, `ttui` | shipped: observe, then control, then peers, then control across the wire |
+| `probe` | serves one machine's state to the tailnet, and acts on it when asked | `baseline` | shipped: the wire, the probe, peers, the merge, control |
 | Model-Experiments views | visualizing experiment output | `panopticon` | sketched |
 
 `plumb` and `baseline` share no dependency and can proceed in parallel.

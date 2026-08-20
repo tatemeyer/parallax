@@ -12,7 +12,7 @@ a Pi with no terminal at all.
 Design:
 [`docs/design/specs/parallax/2026-08-19-remote-hosts-and-the-probe-design.md`](../docs/design/specs/parallax/2026-08-19-remote-hosts-and-the-probe-design.md).
 
-## Two rules worth knowing
+## Three rules worth knowing
 
 **It binds `127.0.0.1` and refuses anything else.** There is no TLS, no
 authentication, and no authorization in this binary — and that is
@@ -31,6 +31,58 @@ rather than "nobody has run them". The rule lives in `split_by_cost`, in
 baseline, shared with the cockpit's refresh thread. A probe with its own
 idea of which checks are safe to poll is how three machines end up able
 to run `cargo test` on a fourth.
+
+**Control is off unless you ask for it.** Serving state is a disclosure;
+accepting actions is a shell, and the two must not arrive together by
+default. Without `--allow-control` the probe builds no executors at all,
+and `POST /action` is a `403` naming the flag — a `403` rather than a
+`404`, because a client that got `404` could not tell "control is off
+here" from "this probe is too old to have control", and those call for
+different things from an operator.
+
+## Letting a cockpit act on this machine
+
+```
+parallax-probe --projects-root ~/Dev --allow-control
+```
+
+With that flag, **anyone who can reach this probe can merge a pull
+request, push a branch, and start an agent run here.** The boundary is
+the same one that protects `/state`: loopback plus `tailscale serve`
+plus the tailnet's ACLs. There is no authentication, and the
+`requestedBy` field a cockpit sends is recorded in the log as a claim
+rather than an identity — nothing verifies it, and the socket reports
+`127.0.0.1` for every request because `tailscale serve` is the thing
+connecting.
+
+Three things follow that are worth knowing before turning it on.
+
+**The classification is this machine's.** A cockpit sends the action and
+the fingerprint the operator confirmed; this probe calls `authorize`
+itself. So whether `Push` needs confirming is decided by the table
+compiled into *this* binary, and a caller that is out of date, or wrong,
+cannot make this machine treat an irreversible action as a reversible
+one. The fingerprint catches a caller that confused two actions; it does
+not catch one that is lying, and is not meant to.
+
+**A submission is not an execution.** `POST /action` files the action
+and answers immediately with the id the caller chose; the work happens
+on a worker thread and the outcome is fetched from `GET /action/{id}`.
+Asking twice is safe — a used id is answered from the record rather than
+run again — which is what makes a cockpit's retry after a lost answer
+harmless.
+
+**The ledger is memory, and says so.** It holds the last 256 actions and
+dies with the process. That is why every answer carries a run marker: a
+probe that restarted has *forgotten*, not *never heard*, and a client
+that could not tell those apart would merge a pull request that had
+already been merged.
+
+If this is a systemd user unit, read the `ProtectHome` note in
+`deploy/parallax-probe.service` before enabling control. A ruling is
+appended under the project root, and the hardening that is right for a
+read-only probe makes every write fail in a way that looks, from another
+room, like the action was rejected.
 
 ## Running it
 

@@ -380,3 +380,21 @@ meant. The summary that travels is the one the operator saw.
    operator takes in a session, and a count has no clock in it — which
    on a machine with no RTC is worth something. **Recommendation: keep
    it; revisit if an operator ever overflows it, which the log shows.**
+4. **Should fixture mode get a *recorded* submitter?** Raised by
+   implementation rather than before it. The remote prompt and the
+   `unknown` log entry are the two things this arc adds to the screen,
+   and neither can be captured by Plumb, because a fixture cockpit
+   builds no courier — this document's own non-goal, and rightly so: a
+   recorded cockpit that could merge a real pull request is a demo with
+   a loaded weapon in it.
+
+   But that is not the only way to read the rule. A peer is already
+   recorded through `FixtureTransport`, which cannot reach any machine;
+   a submitter over the same transport could not either. It would be
+   deterministic, it would keep the property the non-goal is actually
+   protecting, and it would let the two new pieces of screen be judged
+   the way every other piece is.
+
+   **Recommendation: yes, as its own small arc** — it amends an approved
+   non-goal, so it should not be smuggled in beside the feature it would
+   photograph.
