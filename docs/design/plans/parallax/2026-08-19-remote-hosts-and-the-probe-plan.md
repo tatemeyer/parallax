@@ -181,58 +181,71 @@ to zero rather than wrapping.
 
 #### Task 5: Add the `probe` workspace member
 
-- [ ] `probe/Cargo.toml`: `parallax-baseline` by path, `tiny_http`, `serde_json`. Nothing else from the workspace — it must not link panopticon.
-- [ ] Add `"probe"` to the workspace `members`.
-- [ ] `#![warn(missing_docs)]` in `main.rs`.
-- [ ] A test asserting `Cargo.toml` never grows a `panopticon` dependency, in the shape baseline already uses to keep Plumb out of itself.
+- [x] `probe/Cargo.toml`: `parallax-baseline` by path, `tiny_http`, `serde_json`. Nothing else from the workspace — it must not link panopticon.
+- [x] Add `"probe"` to the workspace `members`.
+- [x] `#![warn(missing_docs)]` in `main.rs`.
+- [x] A test asserting `Cargo.toml` never grows a `panopticon` dependency, in the shape baseline already uses to keep Plumb out of itself — plus one that it grows no terminal machinery, since headless is the property that lets it run on a Pi with no TUI.
 
-**Verify:** `cargo build -p parallax-probe` and workspace clippy pass.
+**Verified:** builds clean; `tiny_http` brought only `ascii`,
+`chunked_transfer`, and `httpdate` with it, which matters on a Pi that
+compiles its own binaries.
 
 #### Task 6: Registry to envelope
 
 The pure half of the probe, testable with no socket.
 
-- [ ] `state::envelope(registry: &Registry, config: &AdapterConfig, peer: &str, now: SystemTime) -> StateEnvelope`.
-- [ ] Runs `from_manifest` and `aggregate`, exactly as a local frontend would — the probe invents no aggregation of its own.
-- [ ] The peer name defaults to the OS hostname and is overridable by `--peer <name>`.
-- [ ] A project that fails to load is a degraded row in the envelope, not a dropped one.
+- [x] `state::envelope(registry, config, peer, now) -> StateEnvelope`.
+- [x] Runs `from_manifest` and `aggregate_project`, exactly as a local frontend would — the probe invents no aggregation of its own.
+- [x] The peer name defaults to the OS hostname and is overridable by `--peer <name>`. No dependency for it: `COMPUTERNAME`, then `HOSTNAME`, then `/etc/hostname` — the last being the case the first two miss on the Pi.
+- [x] A project that fails to load is a degraded row in the envelope, not a dropped one.
 
-**Verify:** point it at `panopticon/fixtures` and assert the envelope
-names every fixture project.
+**Unplanned change, and the reason for it.** `split_by_cost` lived in
+`panopticon::refresh`, and its own doc comment said it was public so
+that "a future daemon" could apply the same rule. The probe is that
+daemon and cannot depend on a cockpit, so the function **moved down into
+`parallax-baseline`** and panopticon now re-exports it. One
+implementation, three consumers, which is what the comment was asking
+for. A second implementation of "which checks are safe to poll" is how
+something ends up running `cargo test` on a timer.
+
+**Verified:** against the real `C:/Users/tatem/Dev` — two registered
+projects, TTUI's work feed returning four live GitHub items, SESH's
+degrading with the 404 its private repo actually returns.
 
 ### Slice 2.2: Serving
 
 #### Task 7: `GET /state` and `GET /health`
 
-- [ ] `GET /state` → the envelope as JSON, `Content-Type: application/json`.
-- [ ] `GET /health` → 200 with no scan, so a slow probe and a dead one are distinguishable.
-- [ ] Any other path → 404. Any other method → 405.
-- [ ] `--port` defaulting to 8737, `--projects-root` and `--registry` mirroring panopticon's flags so the two agree on how a registry is named.
+- [x] `GET /state` → the envelope as JSON, `Content-Type: application/json`.
+- [x] `GET /health` → 200 with no scan, so a slow probe and a dead one are distinguishable.
+- [x] Any other path → 404. Any other method → 405 — a `POST` that fell through to `/state` would be a control surface nobody specified.
+- [x] `--port` defaulting to 8737, `--projects-root` and `--registry` mirroring panopticon's flags so the two agree on how a registry is named.
+- [x] `route()` is a pure function of method and URL, so the table is tested without a socket. A trailing slash and a query string do not change the route.
 
-**Verify:** an integration test binding an ephemeral loopback port,
-issuing both requests, and parsing the response back into a
-`StateEnvelope`.
+**Verified:** live against the running probe — `/health` returned `ok`,
+`/state` returned 4,416 bytes of valid `parallax/v1` JSON.
 
 #### Task 8: The loopback refusal
 
-- [ ] The bind address is not configurable. The probe binds `127.0.0.1` and nothing else.
-- [ ] If a future flag or environment variable ever supplies a non-loopback address, the probe exits non-zero with a message naming `tailscale serve` as the intended path.
-- [ ] Document the security argument where the bind happens, not only in the spec.
+- [x] The bind address is not configurable. The probe binds `127.0.0.1` and nothing else.
+- [x] A non-loopback address is refused with a message naming `tailscale serve` as the intended path.
+- [x] The security argument is documented where the bind happens, not only in the spec.
 
-**Verify:** a unit test over the bind-address helper asserting that
-every non-loopback address — `0.0.0.0`, a LAN address, and a `100.x`
-tailnet address — is refused. The tailnet address is the important case:
-it is the one a reasonable person would think is safe.
+**Verified:** `0.0.0.0`, a LAN address, `::`, and **`100.67.55.58` — this
+machine's own tailnet address** are all refused. The tailnet row is the
+one that matters: binding it looks safe and would publish the probe to
+the whole tailnet directly, bypassing `tailscale serve` and its ACLs.
 
 #### Task 9: The refresh runs no build
 
-- [ ] `GET /state` calls only verification adapters reporting `CheckCost::Read`.
-- [ ] An `Execute` adapter is reported as `VerificationOutcome::NotRun`, with a detail naming the command an operator would run.
+- [x] `GET /state` calls only verification adapters reporting `CheckCost::Read`, via the shared `split_by_cost`.
+- [x] An `Execute` adapter is replaced by a stand-in reporting `VerificationOutcome::NotRun` with a detail naming the command. Removing it outright would read as "this project has no tests" rather than "nobody has run them".
 
-**Verify:** build a probe over a manifest declaring `cargo test` with a
-`CommandRunner` that panics if called. `GET /state` must succeed and the
-runner must never fire. This is panopticon's Task 11 property, now with
-three machines able to trigger it at once.
+**Verified twice.** A unit test builds an envelope over a manifest
+declaring `cargo test` inside a temp directory — which would fail slowly
+and loudly if spawned — and gets `NotRun`. And live: SESH declares
+`cargo clippy`, `cargo test`, `cargo fmt --check`, and an `npm` gate;
+all four came back `NotRun` and the whole response took under a second.
 
 ---
 

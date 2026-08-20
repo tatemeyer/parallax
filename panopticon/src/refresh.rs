@@ -6,13 +6,13 @@
 //! returns immediately, so a poll that takes twenty seconds costs the
 //! event loop nothing.
 //!
-//! It also splits its adapters by [`CheckCost`]. Readers go in the
+//! It also splits its adapters by `CheckCost`. Readers go in the
 //! cadence; anything that runs a build is held back until someone asks
 //! for it by name. That split is the only thing standing between this
 //! design and a cockpit that runs `cargo test` every thirty seconds on
 //! the machine running the agent sessions.
 
-use parallax_baseline::adapters::verification::{CheckCost, VerificationStatus};
+use parallax_baseline::adapters::verification::VerificationStatus;
 use parallax_baseline::freshness::Observed;
 use parallax_baseline::state::{aggregate_project, ProjectAdapters, ProjectState};
 use parallax_baseline::validate::Validated;
@@ -89,24 +89,12 @@ pub enum Update {
 /// Takes the checks that run a build out of `adapters`, leaving only
 /// what is safe to poll on a cadence.
 ///
-/// Public because anything that aggregates outside the refresh thread —
-/// fixture mode, a test, a future daemon — must apply the same rule. A
-/// second implementation of "which checks are safe to poll" is how a
-/// cockpit ends up running `cargo test` on a timer.
-pub fn split_by_cost(
-    adapters: &mut ProjectAdapters,
-) -> Vec<Box<dyn parallax_baseline::adapters::verification::VerificationAdapter + Send>> {
-    let mut reading = Vec::new();
-    let mut executing = Vec::new();
-    for adapter in adapters.verification.drain(..) {
-        match adapter.cost() {
-            CheckCost::Read => reading.push(adapter),
-            CheckCost::Execute => executing.push(adapter),
-        }
-    }
-    adapters.verification = reading;
-    executing
-}
+/// Re-exported rather than defined here. It said it was public so that
+/// "a future daemon" could apply the same rule; the probe is that
+/// daemon, and it cannot depend on a cockpit — so the rule moved down
+/// into `parallax-baseline` where all three consumers can reach it.
+/// One implementation, which is the whole point the comment was making.
+pub use parallax_baseline::state::split_by_cost;
 
 /// One project's adapters, split by what calling them costs.
 struct Split {

@@ -1,0 +1,152 @@
+//! `parallax-probe` — serves one machine's platform state.
+//!
+//! Run it on every machine that holds projects. It scans that machine's
+//! own disk with the adapters `parallax-baseline` already provides and
+//! serves the aggregated result as JSON on loopback. A cockpit anywhere
+//! on the tailnet fetches it and merges it with its own.
+//!
+//! ```text
+//! parallax-probe --projects-root ~/Dev
+//! tailscale serve --bg --https=443 http://127.0.0.1:8737
+//! ```
+//!
+//! It never binds a routable address; see [`server::bind_address`].
+
+#![warn(missing_docs)]
+
+mod server;
+mod state;
+
+use parallax_baseline::adapters::factory::AdapterConfig;
+use parallax_baseline::registry::Registry;
+use server::{bind_address, serve, DEFAULT_PORT};
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+const USAGE: &str = "\
+parallax-probe — serves this machine's Parallax state on loopback.
+
+USAGE:
+    parallax-probe [--projects-root <dir> | --registry <file>] [OPTIONS]
+
+    --projects-root <dir>  Treat every child of <dir> holding a
+                           parallax.yaml as registered.
+    --registry <file>      Use the roots a registry file lists.
+    --port <n>             Loopback port (default 8737).
+    --peer <name>          How this machine names itself (default: hostname).
+    -h, --help             This.
+
+The probe binds 127.0.0.1 only. Publish it with:
+    tailscale serve --bg --https=443 http://127.0.0.1:8737
+";
+
+/// How this machine names itself, when nobody said.
+///
+/// No dependency for this: `COMPUTERNAME` on Windows, `HOSTNAME` when a
+/// shell exported it, and `/etc/hostname` on the Pi, which is the case
+/// the first two miss.
+fn default_peer() -> String {
+    if let Ok(name) = std::env::var("COMPUTERNAME") {
+        return name;
+    }
+    if let Ok(name) = std::env::var("HOSTNAME") {
+        return name;
+    }
+    std::fs::read_to_string("/etc/hostname")
+        .map(|s| s.trim().to_string())
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// What the command line asked for.
+struct Args {
+    projects_root: Option<PathBuf>,
+    registry: Option<PathBuf>,
+    port: u16,
+    peer: Option<String>,
+}
+
+fn parse_args() -> Result<Option<Args>, String> {
+    let mut args = Args {
+        projects_root: None,
+        registry: None,
+        port: DEFAULT_PORT,
+        peer: None,
+    };
+    let mut argv = std::env::args().skip(1);
+    while let Some(flag) = argv.next() {
+        let mut value = || argv.next().ok_or(format!("{flag} needs a value"));
+        match flag.as_str() {
+            "-h" | "--help" => return Ok(None),
+            "--projects-root" => args.projects_root = Some(PathBuf::from(value()?)),
+            "--registry" => args.registry = Some(PathBuf::from(value()?)),
+            "--peer" => args.peer = Some(value()?),
+            "--port" => {
+                let raw = value()?;
+                args.port = raw.parse().map_err(|_| format!("`{raw}` is not a port"))?;
+            }
+            other => return Err(format!("unknown flag `{other}`")),
+        }
+    }
+    Ok(Some(args))
+}
+
+fn main() -> ExitCode {
+    let args = match parse_args() {
+        Ok(Some(args)) => args,
+        Ok(None) => {
+            print!("{USAGE}");
+            return ExitCode::SUCCESS;
+        }
+        Err(problem) => {
+            eprintln!("parallax-probe: {problem}\n\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let registry = match (&args.projects_root, &args.registry) {
+        (Some(root), _) => Registry::scan(root),
+        (None, Some(file)) => match Registry::from_file(file) {
+            Ok(registry) => registry,
+            Err(e) => {
+                // A registry file that cannot be read is no answer, not
+                // a partial one — the rule the constructor already holds.
+                eprintln!("parallax-probe: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        // Serving nothing is a legitimate answer and a much better one
+        // than refusing to start: a machine with no projects yet is
+        // still a machine the cockpit should be able to reach.
+        (None, None) => Registry::default(),
+    };
+
+    for failure in registry.failures() {
+        eprintln!("parallax-probe: {failure}");
+    }
+
+    let peer = args.peer.unwrap_or_else(default_peer);
+    let addr = match bind_address("127.0.0.1", args.port) {
+        Ok(addr) => addr,
+        Err(problem) => {
+            eprintln!("parallax-probe: {problem}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let server = match tiny_http::Server::http(addr) {
+        Ok(server) => server,
+        Err(e) => {
+            eprintln!("parallax-probe: could not bind {addr}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    eprintln!(
+        "parallax-probe: {peer} serving {} project(s) on http://{addr}",
+        registry.projects().len()
+    );
+    serve(&server, &registry, &AdapterConfig::default(), &peer);
+    ExitCode::SUCCESS
+}

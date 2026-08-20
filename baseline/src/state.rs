@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use crate::adapters::artifact::{Artifact, ArtifactAdapter};
 use crate::adapters::session::{Session, SessionAdapter};
-use crate::adapters::verification::{VerificationAdapter, VerificationStatus};
+use crate::adapters::verification::{CheckCost, VerificationAdapter, VerificationStatus};
 use crate::adapters::work::{WorkAdapter, WorkSnapshot};
 use crate::adapters::{AdapterError, ProjectContext};
 use crate::autonomy::{resolve, Resolution};
@@ -42,6 +42,31 @@ impl ProjectAdapters {
     pub fn new() -> Self {
         Self::default()
     }
+}
+
+/// Takes the checks that run a build out of `adapters`, leaving only
+/// what is safe to poll on a cadence, and returns the ones held back.
+///
+/// Lives here rather than in a frontend because **every** consumer that
+/// aggregates on a cadence must apply the same rule — a cockpit's
+/// refresh thread, its fixture mode, and a probe serving another
+/// machine. A second implementation of "which checks are safe to poll"
+/// is how something ends up running `cargo test` on a timer, and the
+/// probe makes that worse rather than better: three machines can then
+/// trigger it at once.
+pub fn split_by_cost(
+    adapters: &mut ProjectAdapters,
+) -> Vec<Box<dyn VerificationAdapter + Send>> {
+    let mut reading = Vec::new();
+    let mut executing = Vec::new();
+    for adapter in adapters.verification.drain(..) {
+        match adapter.cost() {
+            CheckCost::Read => reading.push(adapter),
+            CheckCost::Execute => executing.push(adapter),
+        }
+    }
+    adapters.verification = reading;
+    executing
 }
 
 /// One work item's labels, projected onto the normalized axes.
