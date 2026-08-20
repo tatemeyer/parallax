@@ -1,0 +1,17 @@
+[package]
+name = "parallax-panopticon"
+version = "0.1.0"
+edition = "2021"
+description = "Read-only TUI cockpit over parallax-baseline: every registered project's state on one screen."
+
+[[bin]]
+name = "panopticon"
+path = "src/main.rs"
+
+[dependencies]
+parallax-baseline = { path = "../baseline" }
+ttui = "2.0"
+crossterm = "0.27"
+
+[dev-dependencies]
+tempfile = "3"
