@@ -116,7 +116,7 @@ pub fn project(map: &AutonomyMap, label: &str) -> Option<Autonomy> {
 }
 
 /// The outcome of projecting every label on one work item.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Resolution {
     /// The combined projection across every mapped label.
     pub autonomy: Autonomy,

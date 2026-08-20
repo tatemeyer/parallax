@@ -4,6 +4,7 @@
 //! intact, because a blank view is a worse failure than a number
 //! labelled stale.
 
+use serde::{Deserialize, Serialize};
 use crate::adapters::artifact::{Artifact, ArtifactAdapter};
 use crate::adapters::session::{Session, SessionAdapter};
 use crate::adapters::verification::{VerificationAdapter, VerificationStatus};
@@ -44,7 +45,7 @@ impl ProjectAdapters {
 }
 
 /// One work item's labels, projected onto the normalized axes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemAutonomy {
     /// The item's number in its repository.
     pub number: u64,
@@ -53,7 +54,7 @@ pub struct ItemAutonomy {
 }
 
 /// A source that could not be read this cycle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Degradation {
     /// The adapter's `source_name`.
     pub source: String,

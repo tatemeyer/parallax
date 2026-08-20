@@ -1,6 +1,7 @@
 //! The work family: issues, pull requests, their labels, and their
 //! check status. One built-in implementation (`github`, Task 12).
 
+use serde::{Deserialize, Serialize};
 use super::http::{HttpRequest, HttpResponse, HttpTransport};
 use super::{AdapterError, ProjectContext};
 use crate::freshness::{Observed, DEFAULT_POLL_INTERVAL};
@@ -8,7 +9,7 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 
 /// Whether a work item is an issue or a pull request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkKind {
     /// An issue.
     Issue,
@@ -17,7 +18,7 @@ pub enum WorkKind {
 }
 
 /// Where a work item stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkState {
     /// Open and ready.
     Open,
@@ -32,7 +33,7 @@ pub enum WorkState {
 /// How a work item's checks stand. Deliberately a count, not a verdict —
 /// what "green enough" means is a policy question, and the manifest's
 /// autonomy axes are where policy lives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ChecksSummary {
     /// Checks that succeeded.
     pub passed: usize,
@@ -60,7 +61,7 @@ impl ChecksSummary {
 }
 
 /// One issue or pull request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkItem {
     /// The item's number in its repository.
     pub number: u64,
@@ -82,7 +83,7 @@ pub struct WorkItem {
 }
 
 /// Every work item one poll returned.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct WorkSnapshot {
     /// The items, in the order the source returned them.
     pub items: Vec<WorkItem>,

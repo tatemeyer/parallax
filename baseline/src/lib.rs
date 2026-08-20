@@ -16,3 +16,4 @@ pub mod manifest;
 pub mod registry;
 pub mod state;
 pub mod validate;
+pub mod wire;

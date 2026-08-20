@@ -106,32 +106,44 @@ panopticon/src/
 
 #### Task 1: The `wire` module
 
-Hand-written DTOs in `baseline/src/wire.rs`, versioned and strict. They
-are deliberately *not* `#[derive(Serialize)]` on the domain types: the
-next slice has to change an observation's meaning as it crosses, and a
-derived format would carry the falsehood faithfully.
+**Revised during implementation.** The spec first called for
+hand-written DTOs mirroring every domain type. Two corrections, both
+recorded back into the spec:
 
-- [ ] Add `pub mod wire;` to `lib.rs`.
-- [ ] `StateEnvelope { api_version: String, peer: String, now: SystemTime, projects: Vec<ProjectWire> }`.
-- [ ] `ProjectWire` carrying the project's name, its work/verification/artifact/session observations, and each one's `observed_at` and source kind.
-- [ ] `#[serde(deny_unknown_fields, rename_all = "camelCase")]` on every type, matching `RegistryFile`.
-- [ ] `pub const WIRE_API_VERSION: &str = "parallax/v1";`
-- [ ] Serialize `SystemTime` as milliseconds since the Unix epoch, not as a platform-specific struct — the Pi and the desktop must agree on the encoding.
+*The boundary is narrower than "the domain".* Only `Observed<T>` changes
+meaning as it crosses. `WorkItem`, `Artifact`, `Session`, and
+`VerificationStatus` are inert data, and mirroring them adds several
+hundred lines that decouple nothing — a mirror of a type with no
+behaviour is a second place to forget a field. So the structure is
+hand-written and the leaves derive.
 
-**Verify:** `cargo test -p parallax-baseline wire::`. An envelope with an
-unknown key is rejected, naming the key.
+*`deny_unknown_fields` was wrong here.* It is right for a manifest,
+which a human types and can typo. It is backwards for a wire format
+between machines that upgrade at different times: it would break an
+older client on exactly the newer probe it should tolerate.
+
+- [x] Add `pub mod wire;` to `lib.rs`.
+- [x] `StateEnvelope { api_version, peer, now, projects }`, `rename_all = "camelCase"`.
+- [x] `ObservedWire<T> { value, observed_at, source }` — **with no `freshness` method**, so a received observation structurally cannot be asked how fresh it is.
+- [x] `SourceKindWire`, mirroring `SourceKind` because the two do not mean the same thing on both ends.
+- [x] `ProjectWire`, every collection `#[serde(default)]` so a reduced project crosses as a reduced project.
+- [x] Unknown fields **ignored**, with the reason documented at the module level.
+- [x] `pub const WIRE_API_VERSION: &str = "parallax/v1";`
+- [x] Leaf types derive `Serialize`/`Deserialize` (`autonomy.rs` already had them — it is parsed from manifests).
+- [x] `SystemTime` uses serde's own representation rather than a hand-rolled millis encoding; it is stable and cross-platform, and a custom one was unjustified complexity.
+
+**Verified:** `cargo test -p parallax-baseline wire::` — 11 tests pass.
 
 #### Task 2: Domain ↔ wire, and round-trip
 
-- [ ] `to_wire(&ProjectState, peer: &str) -> ProjectWire`.
-- [ ] `from_wire(ProjectWire, ...) -> ProjectState`, taking whatever the re-stamping rule needs (Task 3 settles the signature).
-- [ ] A rejected envelope is an error naming what was wrong, in the shape `RegistryError` already uses: a source and a one-sentence problem.
-- [ ] An envelope whose `apiVersion` is not `parallax/v1` is rejected before any field is read.
+- [x] `ObservedWire::send` / `ProjectWire::send` / `StateEnvelope::send`.
+- [x] `receive` on each, taking the probe's `now`, the client's `now`, and the peer's interval.
+- [x] `WireError { source, problem }` — the shape `RegistryError` already uses, so a peer that answers with nonsense degrades like a project that fails to load.
+- [x] An envelope whose `apiVersion` is not `parallax/v1` is rejected before any project is read.
 
-**Verify:** a property-style round-trip test over a hand-built
-`ProjectState` covering every adapter family, including the empty case —
-"partial support is normal" holds across the wire too, so a project
-declaring only `work:` must survive the trip.
+**Verified:** a full envelope round-trips through JSON unchanged; a
+project declaring nothing but a name survives the trip as a reduced
+view with no degradations, because absent is not degraded.
 
 ### Slice 1.2: The two honesty rules
 
@@ -139,26 +151,27 @@ declaring only `work:` must survive the trip.
 
 The spec's central claim, asserted by name.
 
-- [ ] On receipt, `SourceKind::Watched` becomes `SourceKind::Polled { interval }`, where `interval` is the peer's configured poll interval.
-- [ ] `Polled` observations keep their interval unchanged — they were already honest about being periodic.
-- [ ] Document the rule on the conversion function, with the reason: `Live` means "I read this myself."
+- [x] On receipt, `SourceKind::Watched` becomes `SourceKind::Polled { interval }`, where `interval` is the peer's configured poll interval.
+- [x] `Polled` observations keep their interval unchanged — they were already honest about being periodic.
+- [x] Document the rule on the conversion function, with the reason: `Live` means "I read this myself."
 
-**Verify:** a test named for the claim — build a `Watched` observation,
-send it through `to_wire` then `from_wire`, and assert
-`freshness(now)` is never `Freshness::Live` for any `now`, including
-`now == observed_at`.
+**Verified:** `a_remote_observation_is_never_live` asserts it across
+every `now` a client could plausibly hold — including the instant the
+probe claims it read the file, which is the case a naive implementation
+gets wrong. A companion test confirms the re-stamped value does go
+`Stale` once the peer interval lapses, so the rule makes it honest
+rather than merely pessimistic.
 
 #### Task 4: Clocks are re-based, never compared
 
-- [ ] `from_wire` computes `age = envelope.now - observed_at` on the probe's clock, then sets `observed_at = client_now - age`.
-- [ ] Saturate at zero when the probe reports an `observed_at` after its own `now`; `Observed::age` already does this and the conversion must not bypass it.
-- [ ] Never compare `observed_at` against the client's clock directly, anywhere.
+- [x] `receive` computes `age = probe_now - observed_at` on the probe's clock, then sets `observed_at = client_now - age`.
+- [x] Saturate at zero when the probe reports an `observed_at` after its own `now`.
+- [x] Never compare `observed_at` against the client's clock directly, anywhere.
 
-**Verify:** a test where the probe's clock is one hour ahead of the
-client's and one where it is one hour behind. In both, a value observed
-30 seconds before serialization reports an age of 30 seconds. A third
-test: a probe whose `observed_at` is *after* its `now` yields zero, not
-a wrapped duration.
+**Verified:** three tests. A probe an hour ahead and a probe an hour
+behind both yield a true 30-second age. A probe whose clock jumped
+backwards mid-scan, reporting an observation after its own `now`, ages
+to zero rather than wrapping.
 
 ---
 

@@ -2,6 +2,7 @@
 //! show what is running where. One built-in implementation, a
 //! filesystem scan (Task 17).
 
+use serde::{Deserialize, Serialize};
 use super::{AdapterError, ProjectContext};
 use crate::adapters::artifact::{outermost_dirs, scan_glob};
 use crate::freshness::Observed;
@@ -9,7 +10,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 /// One agent session directory.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Session {
     /// The directory's name.
     pub name: String,

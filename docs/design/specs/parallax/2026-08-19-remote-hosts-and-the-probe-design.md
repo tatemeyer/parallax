@@ -89,17 +89,20 @@ recorded remote hosts cost nothing new.
 derives today. The temptation is to add them and serialize the domain
 types directly.
 
-**That cannot work, and the reason is load-bearing rather than
-stylistic: an observation changes meaning when it crosses a machine
+**That cannot work everywhere, and the reason is load-bearing rather
+than stylistic: an observation changes meaning when it crosses a machine
 boundary** (see the next section). A format that were merely derived
-would transmit the lie faithfully. Since a transformation is required
-anyway, the wire format is written down explicitly.
+would transmit the lie faithfully.
 
-A `wire` module in `parallax-baseline` holds the serialized contract,
-versioned `parallax/v1` like the manifest and the registry file, with
-`deny_unknown_fields` for the same reason those have it — a typo'd key
-must not silently vanish. Domain types stay free to change without
-breaking a running Pi.
+But that argument applies exactly where it applies. `Observed<T>` is the
+type whose meaning changes; `WorkItem`, `Artifact`, `Session`, and
+`VerificationStatus` are inert data that crosses unaltered. Mirroring
+those into parallel DTOs would add several hundred lines that decouple
+nothing — a hand-written mirror of a type with no behaviour is just a
+second place to forget a field. So a `wire` module in
+`parallax-baseline` hand-writes the **structure**, the leaf payloads
+derive their own serialization, and the boundary sits exactly at the
+observation:
 
 ```rust
 pub struct StateEnvelope {
@@ -108,7 +111,29 @@ pub struct StateEnvelope {
     pub now: SystemTime,          // the PROBE's clock, at serialization
     pub projects: Vec<ProjectWire>,
 }
+
+pub struct ObservedWire<T> {      // deliberately NO `freshness()`
+    pub value: T,
+    pub observed_at: SystemTime,  // on the probe's clock
+    pub source: SourceKindWire,
+}
 ```
+
+`ObservedWire` having no `freshness` method is the enforcement
+mechanism, and it is structural rather than a test: there is no way to
+ask a received observation how fresh it is. A caller must call
+`receive`, which demands the client's `now` and the peer's interval —
+the two facts that make an honest answer possible.
+
+**Unknown fields are ignored, not rejected** — the opposite of the rule
+the manifest and the registry file follow. Those are typed by a human,
+so a mistyped `verifications:` has to be an error or it silently does
+nothing. An envelope is emitted by a program, and the two programs sit
+on machines that upgrade at different times: the Pi builds on itself and
+lags a desktop that does not. A client that rejected a field a newer
+probe added would break on precisely the upgrade it exists to survive.
+`apiVersion` is what carries a breaking change, and it is checked before
+any project is read.
 
 ### An observation is re-stamped on receipt
 
