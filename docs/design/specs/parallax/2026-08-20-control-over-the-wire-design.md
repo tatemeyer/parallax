@@ -1,6 +1,7 @@
 # Parallax — Control Over the Wire (Design)
 
-**Status:** proposed. **Date:** 2026-08-20
+**Status:** implemented, and signed off 2026-08-20 with all four open
+questions answered below. On `main` as #41. **Date:** 2026-08-20
 
 **Amends:**
 `docs/design/specs/parallax/2026-08-19-remote-hosts-and-the-probe-design.md`,
@@ -372,6 +373,11 @@ meant. The summary that travels is the one the operator saw.
 
 ## Open questions for sign-off
 
+**All four are answered. This document is signed off**, and the answers
+are recorded here rather than only in the pull requests that acted on
+them, because a decision that lives in a review thread is a decision the
+next reader does not have.
+
 1. **Does the confirmation prompt for a remote action need a second
    step?** The argument for: `m` on a row one keystroke away from a
    different machine's row merges a real pull request on a machine the
@@ -379,15 +385,43 @@ meant. The summary that travels is the one the operator saw.
    quotes the action and would now name the machine, and a confirmation
    an operator learns to dismiss twice is worth less than one they read
    once. **Recommendation: no second step, name the machine loudly.**
+
+   **Answered: no second step.** Accepted on that reasoning — a
+   confirmation an operator learns to dismiss twice is worth less than
+   one they read once. The safety here comes from the prompt being
+   *unreflexive*, not from it being repeated: a merge already asks for
+   the pull request number to be typed, which a hand cannot do by
+   habit, and the machine name is now part of the same sentence.
+   Shipped as `sesh: merge pull request #8 ON pi5 — type 8 and press
+   Enter`, and `cockpit-remote-confirm` judges it on whether an
+   operator could read that question and think it is about the machine
+   in front of them.
+
 2. **Should `--allow-control` be per-peer on the client too** — a
    cockpit that declines to offer control on a peer it can reach? It is
    cheap, and it is also the per-action allowlist argument in a smaller
    coat: two places to be right. **Recommendation: no. The machine that
    would execute is the one that gets to say.**
+
+   **Answered: no.** The machine that would execute is the one that gets
+   to say. A client-side list would be a second place for that to be
+   right, and the one that cannot see the flag it is guessing at — so
+   the two would disagree exactly when it mattered, and the cockpit's
+   copy would be the stale one. The cockpit therefore offers to every
+   peer it watches and lets the answer come from the probe, which is why
+   a refusal is a *reply* rather than a prediction.
+
 3. **Is 256 the right ledger bound?** It is far more actions than an
    operator takes in a session, and a count has no clock in it — which
    on a machine with no RTC is worth something. **Recommendation: keep
    it; revisit if an operator ever overflows it, which the log shows.**
+
+   **Answered: keep 256.** Revisit only if an operator actually
+   overflows it, which the log will show. The property worth protecting
+   is not the number but that the bound is a *count*: a time-based
+   eviction would need a clock the Pi does not have, and "forget
+   anything older than an hour" on a machine that boots at the epoch
+   forgets everything or nothing.
 4. **Should fixture mode get a *recorded* submitter?** Raised by
    implementation rather than before it. The remote prompt and the
    `unknown` log entry are the two things this arc adds to the screen,
@@ -407,7 +441,8 @@ meant. The summary that travels is the one the operator saw.
    non-goal, so it should not be smuggled in beside the feature it would
    photograph.
 
-   **Answered:** yes. Specified in
+   **Answered: yes.** Specified in
    `2026-08-20-the-recorded-submitter-design.md`, as its own arc and its
    own pull request, with the non-goal above narrowed rather than
-   dropped. Questions 1 to 3 are still open and still want a decision.
+   dropped. Shipped; the two pieces of screen it existed for are now
+   captured by `cockpit-remote-confirm` and `cockpit-unknown`.

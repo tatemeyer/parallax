@@ -1,6 +1,6 @@
 # The Recorded Submitter
 
-**Status:** proposed
+**Status:** implemented. On `main` as #45.
 **Amends:** `2026-08-20-control-over-the-wire-design.md`, one non-goal.
 **Size:** one arc.
 
@@ -114,6 +114,10 @@ real one takes as long as a tailnet takes. The scenarios are about what
 the screen says, not how long it takes to say it.
 
 ## Open questions for sign-off
+
+The one below did not block this arc and does not block anything now.
+It is a future amendment, kept here because the moment it becomes worth
+doing is a moment somebody will be looking at this file.
 
 1. **Should a fixture peer's control file be able to record a
    *sequence*** — accept, then running, then done — rather than one
