@@ -78,6 +78,13 @@ The adapters come from `parallax-baseline`'s own factory with a fixture
 transport, so fixture mode exercises the same manifest translation
 production does, not a parallel one.
 
+The shipped set holds three project directories and two recorded
+machines. One of the three, `model-experiments/`, is there because a
+fixture written to exercise a pane cannot fail it: its 318-record
+metrics feed is copied verbatim from that repository and caught three
+defects the invented ones never could. See
+`fixtures/model-experiments/README.md`.
+
 ## What it shows, and what it refuses to invent
 
 - An autonomy axis nothing claims renders `—`, never a default. TTUI
@@ -88,6 +95,17 @@ production does, not a parallel one.
   the sources that did report. A cockpit that renders "unavailable" and
   drops the why has taken a fact and returned a shrug.
 - When the footer cannot fit every source it says how many it hid.
+- A metrics row is drawn as a curve only when its feed says its points
+  are ordered. Three seeds of one sweep cell get a band — min, median,
+  max, positioned on the metric's own scale — because drawing them left
+  to right would assert a progression nobody measured.
+- A metrics row is labelled by the smallest set of dimensions that tells
+  it apart from its siblings, most-distinguishing first. The cockpit
+  does not know which column that is; it is whichever one varies most.
+- A metrics feed's header carries **two** ages, and says how many series
+  it holds. A curve read two seconds ago from a run that died an hour
+  back is fresh and stalled at once, and a screenful of rows is not the
+  feed.
 - The Cloister Bell rings when a project *enters* a blocker state, not
   continuously while one holds, and never as a modal. The first
   observation never rings however bad it is: the cockpit has just
