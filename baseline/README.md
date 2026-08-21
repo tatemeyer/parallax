@@ -147,7 +147,7 @@ ordinary issue label is not an autonomy statement.
 |---|---|
 | `work` | `github` |
 | `verification` | `command`, `plumb` |
-| `artifact` | `figure`, `metrics`, `capture` |
+| `artifact` | `figure`, `metrics` (JSONL), `csv`, `capture` |
 | `session` | filesystem watch |
 
 Each family is one object-safe trait, so aggregation holds heterogeneous
@@ -184,8 +184,9 @@ doctest proves there is no other way to build one.
 
 Everything is exercised with no TTY, no network, and no wall clock. Each
 adapter replays a recorded fixture from `baseline/tests/fixtures/`:
-trimmed real GitHub responses, sample Plumb verdicts, a JSONL metrics
-feed. Live GitHub access is real-external-service exempt and confined to
+trimmed real GitHub responses, sample Plumb verdicts, and one metrics
+feed in both of its formats — `sweep.jsonl` and the `sweep.csv` it was
+projected from, which a test asserts read the same. Live GitHub access is real-external-service exempt and confined to
 `UreqTransport`, the one type in the crate that touches the network; it
 holds no logic beyond mapping a status code onto an `AdapterError`.
 

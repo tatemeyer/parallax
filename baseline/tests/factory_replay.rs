@@ -115,3 +115,46 @@ fn the_live_wrapper_builds_the_same_shape_for_a_real_manifest() {
     let live = from_manifest(&load("ttui.yaml"), &AdapterConfig::default());
     assert_eq!(shape(&live), shape(&built("ttui.yaml")));
 }
+
+/// A manifest asking for `csv` gets the CSV reader, and the columns it
+/// named reach it. Built through the same factory a frontend uses, so
+/// this is the path a real project takes rather than a constructor call.
+#[test]
+fn a_csv_metrics_feed_builds_the_csv_reader_with_its_identifier_columns() {
+    let yaml = "project:\n  name: x\nartifacts:\n  - kind: metrics\n    adapter: csv\n    watch: 'projects/*/results.csv'\n    identifiers: [seed]\n";
+    let validated = validate(parallax_baseline::manifest::parse_manifest(yaml).expect("parses"))
+        .expect("validates");
+    let adapters = from_manifest_with(
+        &validated,
+        &AdapterConfig::default(),
+        FixtureTransport::new,
+        ScriptedRunner::new,
+    );
+    let names: Vec<String> = adapters.artifacts.iter().map(|a| a.source_name()).collect();
+    assert_eq!(names, ["artifact:metrics:csv"]);
+
+    // The declared column actually reaches the reader: with `seed`
+    // dropped, three rows of one cell are one series; without it they
+    // would be three.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("projects/jepa")).unwrap();
+    std::fs::write(
+        dir.path().join("projects/jepa/results.csv"),
+        "variant,seed,metric,value\nfull,0,r,1.0\nfull,1,r,2.0\nfull,2,r,3.0\n",
+    )
+    .unwrap();
+    let mut adapters = adapters;
+    let observed = adapters.artifacts[0]
+        .scan(
+            &parallax_baseline::adapters::ProjectContext::new("x", dir.path()),
+            std::time::SystemTime::UNIX_EPOCH,
+        )
+        .expect("the feed scans");
+    let parallax_baseline::adapters::artifact::ArtifactDetail::Metrics { series } =
+        &observed.value[0].detail
+    else {
+        panic!("expected a metrics artifact");
+    };
+    assert_eq!(series.len(), 1, "one series, three seeds");
+    assert_eq!(series[0].points.len(), 3);
+}

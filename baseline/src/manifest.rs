@@ -109,6 +109,28 @@ pub struct ArtifactEntry {
     pub adapter: Option<ArtifactAdapterKind>,
     /// A glob, relative to the project root.
     pub watch: String,
+    /// Columns that **identify** a measurement rather than distinguish a
+    /// series: a seed index, a run number, a repeat counter.
+    ///
+    /// Only a `csv` feed may declare them, and it is the only feed that
+    /// needs to. JSON has types, and the JSONL reader leans on them — a
+    /// *string* field is a dimension and a *number* is an identifier, so
+    /// a producer says which is which by how it writes the record. CSV
+    /// has no types at all: `seed` and `steps` are both just text, and
+    /// the first partitions nothing while the second partitions a whole
+    /// sweep. Nothing in the file distinguishes them.
+    ///
+    /// So the producer states it. The alternative — inferring which
+    /// column looks like an index — is the kind of guess that is right
+    /// until it is silently wrong, which is the failure class this whole
+    /// area exists to avoid.
+    ///
+    /// Named columns are dropped, so the repeats they enumerate collapse
+    /// into one series carrying their spread. That collapse is what
+    /// makes three seeds of a cell legible as a band rather than as
+    /// three one-point series.
+    #[serde(default)]
+    pub identifiers: Vec<String>,
 }
 
 /// What an artifact feed produces.
@@ -132,6 +154,15 @@ pub enum ArtifactAdapterKind {
     /// JSONL scalar series. Also spelled `jsonl` in a manifest.
     #[serde(alias = "jsonl")]
     Metrics,
+    /// Long-format CSV scalar series: a header row, a `metric` column
+    /// and a `value` column.
+    ///
+    /// Here because tidy long CSV is the ordinary shape of research
+    /// results, and until this existed a project keeping one had to
+    /// transcode it and check in a second copy of facts it already had.
+    /// See [`ArtifactEntry::identifiers`] for the one thing the format
+    /// change genuinely loses.
+    Csv,
     /// Plumb run directories: run id plus verdict.
     Capture,
 }

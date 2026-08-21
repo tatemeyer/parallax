@@ -6,7 +6,10 @@
 //! or the manifest stops being a specification. A frontend that
 //! translates manifests owns part of the schema.
 
-use super::artifact::{CaptureArtifactAdapter, FigureArtifactAdapter, MetricsArtifactAdapter};
+use super::artifact::{
+    CaptureArtifactAdapter, CsvMetricsArtifactAdapter, FigureArtifactAdapter,
+    MetricsArtifactAdapter,
+};
 use super::http::{HttpTransport, UreqTransport};
 use super::session::FilesystemSessionAdapter;
 use super::verification::{
@@ -116,6 +119,10 @@ where
             .push(match validated.artifact_adapter(entry) {
                 ArtifactAdapterKind::Figure => Box::new(FigureArtifactAdapter::new(watch)),
                 ArtifactAdapterKind::Metrics => Box::new(MetricsArtifactAdapter::new(watch)),
+                ArtifactAdapterKind::Csv => Box::new(CsvMetricsArtifactAdapter::new(
+                    watch,
+                    entry.identifiers.clone(),
+                )),
                 ArtifactAdapterKind::Capture => Box::new(CaptureArtifactAdapter::new(watch)),
             });
     }

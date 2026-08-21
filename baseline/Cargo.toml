@@ -9,6 +9,10 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1"
 globset = "0.4"
+# Long-format CSV metrics feeds. A hand-rolled reader is forty lines and
+# is wrong on the first quoted cell holding a comma, which the feed this
+# was added for has in every row.
+csv = "1"
 walkdir = "2"
 sha2 = "0.10"
 ureq = { version = "2", features = ["json"] }
