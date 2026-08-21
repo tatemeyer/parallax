@@ -1,0 +1,23 @@
+# Merged PRs whose merge commit is legitimately not an ancestor of the default branch, verified
+# by hand. Read by .github/scripts/branch_hygiene.sh (Model-Experiments issue #94, Parallax #49).
+#
+# Only Check B findings belong here. A Check A finding -- an *open* PR targeting a non-default
+# base -- should be retargeted, not allowlisted; there is no benign version of that state.
+#
+# Format: "#<pr>  <reason>". Add an entry only after confirming on the default branch that the
+# work actually shipped -- the whole point of the guard is that "PR says merged" is not evidence.
+
+# Deliberately empty.
+#
+# The full-history audit (LOOKBACK_DAYS=3650) is clean: 42 merged PRs, every merge commit an
+# ancestor of main, and no open PR off-target.
+#
+# Parallax #44 -- this repo's instance of the failure, and the one issue #49 expects to see here
+# -- is absent for a reason worth writing down rather than re-deriving. It is CLOSED, not merged:
+# `mergeCommit` is null and its base had already auto-retargeted to `main`. Check A reads open
+# PRs and Check B reads merged ones with a merge commit, so #44 is now outside both by
+# construction. That is not a blind spot. While #44 was open and stacked on
+# `arc/control-over-the-wire` it was exactly a Check A finding, which is the check that fires
+# while retargeting is still a one-click fix. The audit is quiet here because the incident was
+# caught and recovered by hand (c397e9c cherry-picked onto main, shipped as #45), not because the
+# guard cannot see it.
