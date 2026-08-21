@@ -6,23 +6,32 @@
 //! for the decision.
 
 use crate::actions::executor::ProcessControl;
-use crate::adapters::verification::CommandRunner;
+use crate::adapters::verification::ProgramRunner;
 use crate::adapters::AdapterError;
 use std::path::PathBuf;
 
 /// Runs capture and push against a project's working tree.
 ///
-/// Goes through `CommandRunner` rather than `std::process` so a test
-/// asserts the exact command line without running it — the same seam
-/// the verification adapter already uses, rather than a second way to
-/// spawn things.
-pub struct LocalProcessControl<R: CommandRunner> {
+/// Goes through a runner rather than `std::process` directly so a test
+/// asserts the exact invocation without performing it — the same kind of
+/// seam the verification adapter uses, rather than a second way to spawn
+/// things.
+///
+/// **The runner is a [`ProgramRunner`], and that is structural.** Every
+/// argument these methods pass carries a value that arrived from
+/// outside: an action's `scenario` or `branch` field off the wire, or
+/// whatever the operator typed at a prompt. There is deliberately no
+/// constructor that accepts a
+/// [`ShellRunner`](crate::adapters::verification::ShellRunner) — the
+/// refusal is the absence of a capability rather than a check in front
+/// of one, the same shape the probe uses for `--allow-control`.
+pub struct LocalProcessControl<R: ProgramRunner> {
     runner: R,
     root: PathBuf,
     plumb: String,
 }
 
-impl<R: CommandRunner> LocalProcessControl<R> {
+impl<R: ProgramRunner> LocalProcessControl<R> {
     /// Control over the working tree at `root`.
     pub fn new(runner: R, root: impl Into<PathBuf>) -> Self {
         Self {
@@ -44,12 +53,12 @@ impl<R: CommandRunner> LocalProcessControl<R> {
         &self.runner
     }
 
-    /// Runs `command`, treating a non-zero exit as a failure carrying
-    /// whatever the process said about it.
-    fn run(&mut self, command: &str) -> Result<(), AdapterError> {
+    /// Runs `program` with `args`, treating a non-zero exit as a failure
+    /// carrying whatever the process said about it.
+    fn run(&mut self, program: &str, args: &[&str]) -> Result<(), AdapterError> {
         let out = self
             .runner
-            .run(command, &self.root)
+            .run(program, args, &self.root)
             .map_err(AdapterError::Io)?;
         if out.status == 0 {
             return Ok(());
@@ -61,21 +70,31 @@ impl<R: CommandRunner> LocalProcessControl<R> {
         } else {
             out.stderr.trim()
         };
+        // Joined only to *report* what ran. Nothing parses this back,
+        // and nothing may: the moment a caller splits it again, the
+        // argument count this arc fixed becomes a guess.
+        let shown = std::iter::once(program)
+            .chain(args.iter().copied())
+            .collect::<Vec<_>>()
+            .join(" ");
         Err(AdapterError::Parse(format!(
-            "`{command}` exited {}: {said}",
+            "`{shown}` exited {}: {said}",
             out.status
         )))
     }
 }
 
-impl<R: CommandRunner> ProcessControl for LocalProcessControl<R> {
+impl<R: ProgramRunner> ProcessControl for LocalProcessControl<R> {
     fn capture(&mut self, project: &str, scenario: Option<&str>) -> Result<(), AdapterError> {
         let _ = project; // the root already identifies it
-        let command = match scenario {
-            Some(s) => format!("{} capture --scenario {s}", self.plumb),
-            None => format!("{} capture --all", self.plumb),
-        };
-        self.run(&command)
+                         // `scenario` arrives from the wire and is not narrowed yet, so
+                         // it must land in exactly one argument. It does, because it is
+                         // one element of the list rather than a substring of a sentence.
+        let plumb = self.plumb.clone();
+        match scenario {
+            Some(s) => self.run(&plumb, &["capture", "--scenario", s]),
+            None => self.run(&plumb, &["capture", "--all"]),
+        }
     }
 
     /// Not implemented, and not an oversight.
@@ -86,6 +105,15 @@ impl<R: CommandRunner> ProcessControl for LocalProcessControl<R> {
     /// single harness into the platform, which is the coupling the
     /// adapter families exist to avoid. When a harness contract exists
     /// it becomes another `ProcessControl` and nothing else changes.
+    ///
+    /// **Being unimplemented is not what makes `prompt` safe**, and a
+    /// harness arc must not read it that way. `prompt` is free text off
+    /// the wire and no validator can narrow it — the whole point of a
+    /// prompt is that it is arbitrary. What contains it is that it is
+    /// **passed as one argument to a program**, through the
+    /// [`ProgramRunner`] this type already holds. An implementation that
+    /// reaches for a shell to interpolate it into re-opens the hole this
+    /// arc closed, and would be the widest instance of it.
     fn dispatch(&mut self, project: &str, item: u64, prompt: &str) -> Result<String, AdapterError> {
         let _ = (project, item, prompt);
         Err(AdapterError::Unsupported(
@@ -110,18 +138,31 @@ impl<R: CommandRunner> ProcessControl for LocalProcessControl<R> {
         // push does depends on the branch's upstream and on
         // `push.default`, and an action the operator confirmed should
         // not mean different things on different machines.
-        self.run(&format!("git push origin {branch}:{branch}"))
+        //
+        // **The surviving `format!` is correct and is not a leftover.**
+        // It builds one argv element, `branch:branch`, which is what a
+        // refspec is. `format!` was never the defect; `format!` into
+        // something an interpreter reads was. Removing this would mean
+        // inventing a way to say "one refspec" in two arguments, which
+        // git has no spelling for.
+        //
+        // What this does *not* fix is a branch beginning with `-`,
+        // which git reads as one of its own flags. Argument injection
+        // survives argv, and closing it is `BranchName`'s job in the
+        // next arc — named here so the gap is deliberate rather than
+        // discovered.
+        self.run("git", &["push", "origin", &format!("{branch}:{branch}")])
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::verification::{CommandOutput, ScriptedRunner};
+    use crate::adapters::verification::{CommandOutput, Invocation, ScriptedProgramRunner};
 
-    /// A runner with nothing queued: every command succeeds.
-    fn control() -> LocalProcessControl<ScriptedRunner> {
-        LocalProcessControl::new(ScriptedRunner::new(), "/projects/ttui")
+    /// A runner with nothing queued: every invocation succeeds.
+    fn control() -> LocalProcessControl<ScriptedProgramRunner> {
+        LocalProcessControl::new(ScriptedProgramRunner::new(), "/projects/ttui")
     }
 
     #[test]
@@ -130,7 +171,10 @@ mod tests {
         c.capture("ttui", Some("cockpit-work")).unwrap();
         assert_eq!(
             c.runner().calls(),
-            ["plumb capture --scenario cockpit-work"]
+            [Invocation::new(
+                "plumb",
+                ["capture", "--scenario", "cockpit-work"]
+            )]
         );
     }
 
@@ -138,18 +182,29 @@ mod tests {
     fn capturing_without_a_scenario_captures_every_one() {
         let mut c = control();
         c.capture("ttui", None).unwrap();
-        assert_eq!(c.runner().calls(), ["plumb capture --all"]);
+        assert_eq!(
+            c.runner().calls(),
+            [Invocation::new("plumb", ["capture", "--all"])]
+        );
     }
 
     /// A bare `git push` means whatever the branch's upstream and
     /// `push.default` say it means. A confirmed action must not.
+    ///
+    /// **The claim this test was written for is unchanged** — the
+    /// remote is named and so are both ends of the refspec. What changed
+    /// is that it now asserts an argument *list*, so it also witnesses
+    /// that the refspec is one argument rather than three words.
     #[test]
     fn pushing_names_the_remote_and_both_ends_of_the_refspec() {
         let mut c = control();
         c.push("ttui", "worktree-arc-3").unwrap();
         assert_eq!(
             c.runner().calls(),
-            ["git push origin worktree-arc-3:worktree-arc-3"]
+            [Invocation::new(
+                "git",
+                ["push", "origin", "worktree-arc-3:worktree-arc-3"]
+            )]
         );
     }
 
@@ -164,7 +219,7 @@ mod tests {
     /// and the operator gets what the tool actually said.
     #[test]
     fn a_non_zero_exit_is_an_error_carrying_what_the_process_said() {
-        let mut runner = ScriptedRunner::new();
+        let mut runner = ScriptedProgramRunner::new();
         runner.push(CommandOutput {
             status: 1,
             stdout: String::new(),
