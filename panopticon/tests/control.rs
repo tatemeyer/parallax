@@ -264,7 +264,7 @@ fn overruling_addresses_the_finding_under_the_cursor() {
     let run = parallax_baseline::adapters::artifact::Artifact {
         path: std::path::PathBuf::from("/tmp/20260820T020000Z"),
         kind: parallax_baseline::manifest::ArtifactKind::Capture,
-        modified: at(0),
+        modified: Some(at(0)),
         detail: parallax_baseline::adapters::artifact::ArtifactDetail::Capture {
             run_id: "20260820T020000Z".into(),
             outcome: parallax_baseline::adapters::verification::VerificationOutcome::Pass,
@@ -310,7 +310,7 @@ fn ruling_with_the_cursor_on_a_run_row_does_nothing() {
         .seed_artifacts(vec![parallax_baseline::adapters::artifact::Artifact {
             path: std::path::PathBuf::from("/tmp/20260820T020000Z"),
             kind: parallax_baseline::manifest::ArtifactKind::Capture,
-            modified: at(0),
+            modified: Some(at(0)),
             detail: parallax_baseline::adapters::artifact::ArtifactDetail::Capture {
                 run_id: "20260820T020000Z".into(),
                 outcome: parallax_baseline::adapters::verification::VerificationOutcome::Pass,

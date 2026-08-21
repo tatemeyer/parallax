@@ -237,8 +237,16 @@ pub struct Artifact {
     pub path: PathBuf,
     /// Which feed produced it.
     pub kind: ArtifactKind,
-    /// Its filesystem modification time.
-    pub modified: SystemTime,
+    /// When the producer last wrote it, on **this machine's** clock —
+    /// re-based on receipt for an artifact that came from a peer, the
+    /// same way an observation's own timestamp is.
+    ///
+    /// `None` when nobody could say: a filesystem that does not report
+    /// modification times, or a peer whose own numbers did not admit an
+    /// age. An absent value is the honest rendering of "unknown", and
+    /// the alternative — a fallback timestamp — is indistinguishable
+    /// from a measurement once it reaches a screen.
+    pub modified: Option<SystemTime>,
     /// What the adapter read from it.
     pub detail: ArtifactDetail,
 }
@@ -318,12 +326,15 @@ pub(crate) fn outermost_dirs(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     roots
 }
 
-/// The filesystem modification time of a path, or the Unix epoch when
-/// the filesystem does not report one.
-fn modified_at(path: &Path) -> SystemTime {
-    std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .unwrap_or(SystemTime::UNIX_EPOCH)
+/// The filesystem modification time of a path, or `None` when the
+/// filesystem does not report one.
+///
+/// `None` rather than the Unix epoch. A fallback timestamp is a lie a
+/// renderer cannot detect — "produced 56 years ago" is a sentence about
+/// a missing value dressed up as a measurement — and the whole point of
+/// the second age is that a reader can trust it.
+fn modified_at(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 /// Reports pre-rendered images: path, size, modification time. It never

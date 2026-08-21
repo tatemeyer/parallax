@@ -17,18 +17,40 @@
 //! supposed to tolerate. Breaking changes are what [`WIRE_API_VERSION`]
 //! is for.
 
-use crate::adapters::artifact::Artifact;
+use crate::adapters::artifact::{Artifact, ArtifactDetail};
 use crate::adapters::session::Session;
 use crate::adapters::verification::VerificationStatus;
 use crate::adapters::work::WorkSnapshot;
 use crate::freshness::{Observed, SourceKind};
+use crate::manifest::ArtifactKind;
 use crate::state::{Degradation, ItemAutonomy, ProjectState};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 /// The wire format's version. Bumped only for a change a client of the
 /// previous version could not read.
-pub const WIRE_API_VERSION: &str = "parallax/v1";
+///
+/// **`v2` removed `Artifact::modified` from the wire.** An artifact now
+/// travels as [`ArtifactWire`], carrying an age rather than a producer
+/// timestamp. `v1` clients require the timestamp field, so a `v2`
+/// envelope does not deserialize for them at all — which is the
+/// definition of a breaking change rather than an added field the
+/// tolerance rule above covers.
+///
+/// The bump costs something real and is still right. Without it, a
+/// newer client reading an older probe would quietly report every
+/// artifact's producer age as "unknown": technically true, and a whole
+/// capability silently absent with nothing on screen saying why. A
+/// version mismatch is reported as a degradation that names both
+/// versions, which is the same preference this platform applies to
+/// `Submitted::Unknown` — say which thing is not known, rather than
+/// present an answer that happens not to be wrong.
+///
+/// **Both ends must be redeployed together.** The Pi builds on itself
+/// and lags the desktop, so expect it to be the one still speaking the
+/// old version.
+pub const WIRE_API_VERSION: &str = "parallax/v2";
 
 /// An envelope that could not be understood, and why.
 ///
@@ -145,6 +167,117 @@ impl<T> ObservedWire<T> {
     }
 }
 
+/// An artifact as it travels.
+///
+/// **The type the control arc declined to write.** Its reason was that
+/// `Artifact` is inert data — true of its path, its kind and its parsed
+/// series, and false of exactly one field. `modified` is a foreign
+/// clock *inside a value*, and [`ObservedWire::receive`] re-bases the
+/// envelope while passing values through untouched, so it crossed raw.
+///
+/// **A producer timestamp never travels.** What travels is
+/// `modified_age_secs`: how long before the observation the file was
+/// last written, measured entirely on the producing machine's clock,
+/// where both numbers came from. A duration has no clock in it and
+/// nothing to compare, so there is no arrangement of two machines'
+/// wall clocks that makes it wrong. The client adds it back to the
+/// observation's re-based timestamp.
+///
+/// This is the same choice that gave [`ObservedWire`] no `freshness()`:
+/// make the dishonest thing unrepresentable rather than remember to
+/// correct it. A `SystemTime` on the wire is a value someone will
+/// eventually subtract from their own clock, and they will be right to
+/// think they may.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactWire {
+    /// Where it sits on the producing machine.
+    pub path: PathBuf,
+    /// Which feed produced it.
+    pub kind: ArtifactKind,
+    /// What the adapter read from it. Genuinely inert.
+    pub detail: ArtifactDetail,
+    /// How long before this observation the file was last written.
+    ///
+    /// Absent when the producer could not say — no modification time
+    /// from its filesystem, or one that post-dates the scan that found
+    /// it, which is not an age on any clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_age_secs: Option<u64>,
+}
+
+impl ArtifactWire {
+    /// Converts a producer timestamp into an age at observation.
+    ///
+    /// Both `observed_at` and `modified` come from the producing
+    /// machine, so their difference is true even when that machine's
+    /// clock is wrong — which a Pi 5 with no RTC generally is, until
+    /// NTP lands.
+    ///
+    /// A file whose modification time is *after* the scan that found it
+    /// yields `None`. On one clock that cannot happen, so the value is
+    /// not an age and reporting a saturated zero would be the same
+    /// silent lie this type exists to remove.
+    pub fn send(artifact: Artifact, observed_at: SystemTime) -> Self {
+        Self {
+            path: artifact.path,
+            kind: artifact.kind,
+            detail: artifact.detail,
+            modified_age_secs: artifact
+                .modified
+                .and_then(|modified| observed_at.duration_since(modified).ok())
+                .map(|age| age.as_secs()),
+        }
+    }
+
+    /// Rebuilds a producer timestamp against the receiving machine's
+    /// clock, given the already re-based observation time.
+    pub fn receive(self, observed_at: SystemTime) -> Artifact {
+        Artifact {
+            path: self.path,
+            kind: self.kind,
+            detail: self.detail,
+            modified: self
+                .modified_age_secs
+                .and_then(|secs| observed_at.checked_sub(Duration::from_secs(secs))),
+        }
+    }
+}
+
+/// Sends one artifact feed, converting each producer timestamp against
+/// the observation that found it.
+fn send_artifacts(observed: Observed<Vec<Artifact>>) -> ObservedWire<Vec<ArtifactWire>> {
+    let observed_at = observed.observed_at;
+    ObservedWire::send(observed.map(|artifacts| {
+        artifacts
+            .into_iter()
+            .map(|artifact| ArtifactWire::send(artifact, observed_at))
+            .collect()
+    }))
+}
+
+/// Receives one artifact feed.
+///
+/// Order matters: the envelope is re-based **first**, and each
+/// artifact's age is then measured back from the result. Doing it the
+/// other way round would reconstruct the timestamps against the peer's
+/// clock, which is the bug this replaced.
+fn receive_artifacts(
+    wire: ObservedWire<Vec<ArtifactWire>>,
+    probe_now: SystemTime,
+    client_now: SystemTime,
+    peer_interval: Duration,
+) -> Observed<Vec<Artifact>> {
+    let observed = wire.receive(probe_now, client_now, peer_interval);
+    let observed_at = observed.observed_at;
+    observed.map(|artifacts| {
+        artifacts
+            .into_iter()
+            .map(|artifact| artifact.receive(observed_at))
+            .collect()
+    })
+}
+
 /// One project's state, as it travels.
 ///
 /// Every collection defaults to empty and every option to `None`, so a
@@ -176,7 +309,7 @@ pub struct ProjectWire {
     pub verification: Vec<ObservedWire<VerificationStatus>>,
     /// Each declared artifact feed's contents.
     #[serde(default)]
-    pub artifacts: Vec<ObservedWire<Vec<Artifact>>>,
+    pub artifacts: Vec<ObservedWire<Vec<ArtifactWire>>>,
     /// The session feed's contents, when declared and reachable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sessions: Option<ObservedWire<Vec<Session>>>,
@@ -200,11 +333,7 @@ impl ProjectWire {
                 .into_iter()
                 .map(ObservedWire::send)
                 .collect(),
-            artifacts: state
-                .artifacts
-                .into_iter()
-                .map(ObservedWire::send)
-                .collect(),
+            artifacts: state.artifacts.into_iter().map(send_artifacts).collect(),
             sessions: state.sessions.map(ObservedWire::send),
             degradations: state.degradations,
         }
@@ -244,7 +373,7 @@ impl ProjectWire {
             artifacts: self
                 .artifacts
                 .into_iter()
-                .map(|o| o.receive(probe_now, client_now, peer_interval))
+                .map(|o| receive_artifacts(o, probe_now, client_now, peer_interval))
                 .collect(),
             sessions: self
                 .sessions
@@ -460,15 +589,18 @@ mod tests {
 
     #[test]
     fn an_envelope_from_a_version_this_build_cannot_read_is_refused_by_name() {
+        // `v1` rather than an invented future version: it is the real
+        // case now that artifacts dropped their producer timestamp, and
+        // a Pi that builds on itself is the machine expected to lag.
         let envelope = StateEnvelope {
-            api_version: "parallax/v2".into(),
+            api_version: "parallax/v1".into(),
             peer: "pi5".into(),
             now: at(0),
             projects: vec![],
         };
         let err = envelope.receive(at(0), PEER_INTERVAL).unwrap_err();
         assert_eq!(err.source, "pi5");
-        assert!(err.problem.contains("parallax/v2"), "got {}", err.problem);
+        assert!(err.problem.contains("parallax/v1"), "got {}", err.problem);
         assert!(err.problem.contains(WIRE_API_VERSION));
     }
 
