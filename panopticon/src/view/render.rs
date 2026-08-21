@@ -215,7 +215,32 @@ fn render_detail(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer)
     .iter()
     .map(|line| elide(line, inner.width))
     .collect();
-    List::new(&lines, frame.detail_selected).render(inner, buf);
+    let (visible, selected) = window(&lines, frame.detail_selected, inner.height as usize);
+    List::new(visible, selected).render(inner, buf);
+}
+
+/// The run of `lines` that fits `height`, positioned so the selected
+/// one is inside it, and where the selection sits within that run.
+///
+/// `List` draws from the top and takes as many rows as fit, so a pane
+/// holding more lines than that simply lost the rest — silently, with
+/// the highlight nowhere on screen and `j` appearing to do nothing.
+/// Every pane was short enough for that not to show until a real
+/// metrics feed arrived with a hundred and thirteen lines in it.
+///
+/// The window moves only as far as it has to: while the selection fits
+/// on the first screenful this is the identity, which is why no frame
+/// that already rendered moves.
+fn window(lines: &[String], selected: usize, height: usize) -> (&[String], usize) {
+    if height == 0 || lines.len() <= height {
+        return (lines, selected);
+    }
+    // Scrolled to keep the selection on the last row, then clamped so
+    // the final screenful is full rather than trailing off the bottom.
+    let start = selected
+        .saturating_sub(height - 1)
+        .min(lines.len() - height);
+    (&lines[start..start + height], selected - start)
 }
 
 /// The tab strip, with the showing tab bracketed.
@@ -305,38 +330,63 @@ fn metrics_lines(frame: &Frame<'_>, project: &ProjectState) -> Vec<String> {
     if feeds.is_empty() {
         return vec!["no metrics feeds".to_string()];
     }
+    metrics::metric_lines(&feeds)
+        .iter()
+        .map(metric_line)
+        .collect()
+}
 
-    let mut lines = Vec::new();
-    for feed in &feeds {
-        let produced = match feed.produced {
-            Some(age) => format!("produced {}s ago", age.as_secs()),
-            // Not "0s", and not a date from 1970. Nobody could say.
-            None => "produced unknown".to_string(),
-        };
-        lines.push(format!(
-            "{}   read {}s ago · {produced}",
-            feed.name,
-            feed.read.as_secs()
-        ));
+/// The column a series' label is given, and cut off at.
+///
+/// **Cut off, not merely padded.** A real producer's dimensions ran to
+/// 197 characters, and a row that overran this column pushed its own
+/// point count, its band and its numbers off the right-hand edge —
+/// leaving a pane of identical prefixes and no measurements on it. The
+/// label is ordered most-distinguishing-first upstream so that what
+/// survives the cut is the part that tells two rows apart.
+///
+/// The width is what is left over at the cockpit's declared 120
+/// columns once the point count, the band and the three numbers have
+/// theirs — fixed columns and an elision, the same arrangement the work
+/// pane uses for a title.
+const LABEL: u16 = 42;
 
-        for group in &feed.groups {
-            lines.push(format!("  {}", group.name));
-            for row in &group.rows {
-                let label = if row.label.is_empty() {
-                    "—".to_string()
-                } else {
-                    row.label.clone()
-                };
-                lines.push(format!(
-                    "    {:<24} {:>4}  {}",
-                    label,
-                    row.points,
-                    shape_line(&row.shape, group.axis)
-                ));
-            }
+/// One line of the metrics pane.
+fn metric_line(line: &metrics::MetricLine<'_>) -> String {
+    match line {
+        metrics::MetricLine::Feed(feed) => {
+            let produced = match feed.produced {
+                Some(age) => format!("produced {}s ago", age.as_secs()),
+                // Not "0s", and not a date from 1970. Nobody could say.
+                None => "produced unknown".to_string(),
+            };
+            // The series count is here so that a pane showing the first
+            // twenty rows of a hundred and six says which of those it is
+            // showing.
+            format!(
+                "{}   read {}s ago · {produced} · {} metrics, {} series",
+                feed.name,
+                feed.read.as_secs(),
+                feed.groups.len(),
+                feed.series()
+            )
+        }
+        metrics::MetricLine::Group(group) => format!("  {}", group.name),
+        metrics::MetricLine::Row { row, axis } => {
+            let label = if row.label.is_empty() {
+                "—".to_string()
+            } else {
+                row.label.clone()
+            };
+            format!(
+                "    {:<width$} {:>4}  {}",
+                elide(&label, LABEL),
+                row.points,
+                shape_line(&row.shape, *axis),
+                width = LABEL as usize,
+            )
         }
     }
-    lines
 }
 
 /// One row's values, in the only form its shape licenses.
@@ -375,6 +425,12 @@ const TRACK: usize = 24;
 /// other did not differ, and one that sits clear of the rest did. That
 /// comparison is the entire content of a null result, and it is not
 /// available from three numbers printed in a column.
+///
+/// `┼` is a row whose whole spread fell inside one cell. It is neither
+/// extreme because at this resolution there is only one place to be —
+/// and a `├` with no `┤` after it reads as an interval running off the
+/// end of the row, which is the opposite of what happened. The three
+/// numbers beside it still carry the width the cell cannot.
 fn track(min: f64, median: f64, max: f64, axis: Option<(f64, f64)>) -> String {
     let (lo, hi) = axis.unwrap_or((min, max));
     let span = hi - lo;
@@ -391,6 +447,11 @@ fn track(min: f64, median: f64, max: f64, axis: Option<(f64, f64)>) -> String {
     let (first, middle, last) = (cell(min), cell(median), cell(max));
     (0..TRACK)
         .map(|i| {
+            // Narrower than a cell — including a row where nothing
+            // varied at all, which lands every mark on cell zero.
+            if first == last {
+                return if i == first { '┼' } else { ' ' };
+            }
             // Edges before the median. Where a median rounds onto an
             // extreme they are within a cell of each other anyway, and
             // a band that appears to stop at its median understates how
@@ -613,5 +674,66 @@ fn put_str(buf: &mut Buffer, x: u16, y: u16, text: &str, area: &Rect) {
                 ..Default::default()
             },
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::window;
+
+    fn lines(n: usize) -> Vec<String> {
+        (0..n).map(|i| i.to_string()).collect()
+    }
+
+    /// The case every frame recorded before this existed is in: the
+    /// pane fits, so the window is the identity and nothing moves.
+    #[test]
+    fn a_pane_that_fits_is_shown_whole() {
+        let all = lines(5);
+        let (visible, selected) = window(&all, 3, 10);
+        assert_eq!(visible.len(), 5);
+        assert_eq!(selected, 3);
+    }
+
+    /// While the selection is on the first screenful the window still
+    /// does not move — a list that scrolled from the first keypress
+    /// would make `j` feel like it moved the wrong thing.
+    #[test]
+    fn a_selection_on_the_first_screenful_does_not_scroll() {
+        let all = lines(100);
+        let (visible, selected) = window(&all, 4, 10);
+        assert_eq!(visible[0], "0");
+        assert_eq!(selected, 4);
+    }
+
+    /// The defect this exists for: a hundred and thirteen lines into a
+    /// pane twenty-six tall used to show the first twenty-six, with the
+    /// highlight nowhere and the other eighty-seven unreachable.
+    #[test]
+    fn a_selection_past_the_bottom_brings_its_line_onto_the_screen() {
+        let all = lines(113);
+        let (visible, selected) = window(&all, 90, 26);
+        assert_eq!(visible.len(), 26);
+        assert_eq!(visible[selected], "90");
+    }
+
+    /// The last screenful is a full one rather than a few rows trailing
+    /// off the bottom.
+    #[test]
+    fn the_end_of_a_long_pane_still_fills_the_screen() {
+        let all = lines(113);
+        let (visible, selected) = window(&all, 112, 26);
+        assert_eq!(visible.len(), 26);
+        assert_eq!(visible[0], "87");
+        assert_eq!(selected, 25);
+    }
+
+    /// A pane with no room is not a panic.
+    #[test]
+    fn no_height_is_no_rows() {
+        let all = lines(3);
+        let (visible, selected) = window(&all, 2, 0);
+        assert_eq!(visible.len(), 3, "nothing to window against");
+        assert_eq!(selected, 2);
     }
 }

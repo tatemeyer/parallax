@@ -365,7 +365,13 @@ impl Panopticon {
                 Tab::Work => crate::view::work::work_rows(p).len(),
                 Tab::Verification => p.verification.len().max(1),
                 Tab::Artifacts => crate::view::artifacts::artifact_rows(p).len(),
-                Tab::Metrics => crate::view::metrics::metric_feeds(p, self.clock.now()).len(),
+                // Lines, not feeds. There is one feed and a hundred
+                // and thirteen lines under it, and counting the feed
+                // left `j` unable to move anywhere in the pane.
+                Tab::Metrics => {
+                    let feeds = crate::view::metrics::metric_feeds(p, self.clock.now());
+                    crate::view::metrics::metric_lines(&feeds).len()
+                }
                 Tab::Sessions => crate::view::sessions::session_rows(p, self.clock.now()).len(),
                 Tab::Log => self.control.log().len(),
             })

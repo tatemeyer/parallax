@@ -86,6 +86,32 @@ fn model_experiments_manifest_parses_and_validates() {
     );
 }
 
+/// Both feeds used to watch `projects/*/results/**`, a directory that
+/// repository has never had. The metrics feed now names a file that is
+/// checked in, which is what makes the cockpit's metrics pane show
+/// something on a fresh clone rather than only on the machine that last
+/// ran a sweep — and what let the fixture in
+/// `panopticon/fixtures/model-experiments/` be a recording rather than
+/// an invention.
+///
+/// Asserted here because a declaration nothing backs is the failure this
+/// project's own manifest names, and the recorded copy is where that
+/// claim can be checked without a second checkout.
+#[test]
+fn the_model_experiments_metrics_feed_names_a_checked_in_file() {
+    let v = load("model-experiments.yaml");
+    let m = v.manifest();
+    assert_eq!(m.artifacts[1].watch, "projects/*/results.jsonl");
+    assert!(
+        !m.artifacts[1].watch.contains("results/"),
+        "the empty-by-construction glob is back"
+    );
+    // The figure feed still watches produced output, and that is
+    // legitimate: `.outputs/` is gitignored by that repository, so an
+    // empty scan there really does mean "nothing has been run here yet".
+    assert_eq!(m.artifacts[0].watch, ".outputs/*/**/*.png");
+}
+
 #[test]
 fn model_experiments_labels_project_onto_the_spec_s_table() {
     let v = load("model-experiments.yaml");

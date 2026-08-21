@@ -13,10 +13,13 @@ scenarios:
     intent: >
       The Parallax cockpit, showing recorded state with a frozen clock,
       across three machines.
-      A project rail on the left lists four rows, each with a health
-      glyph: `sesh` and `ttui` read from this machine, and two more from
-      recorded peers. Each peer's row is qualified with the machine it is
-      on — `sesh@pi5`, and `ttui@tates...` ending in an ellipsis because
+      A project rail on the left lists five rows, each with a health
+      glyph: `model-experiments`, `sesh` and `ttui` read from this
+      machine, and two more from recorded peers. The first row's name is
+      longer than the rail, so it ends in `...` — the rail elides rather
+      than clips, and a name cut off without saying so would read as a
+      name that is simply that short. Each peer's row is qualified with
+      the machine it is on — `sesh@pi5`, and `ttui@tates...` ending in an ellipsis because
       the rail is narrower than the whole name. That suffix is the only
       thing distinguishing the last row from the local `ttui` two rows
       above it, which is the entire reason it is there. In the first
@@ -46,7 +49,7 @@ scenarios:
       The cockpit refusing to act on a machine it can only watch — and
       the point of this scenario is that it is one of *two* recorded
       machines, only one of which may be acted on. The operator moves
-      the selection three times, past a peer that does accept actions,
+      the selection four times, past a peer that does accept actions,
       landing on the last row: the one on `tates-laptop`. They press
       `c`, which on any local row runs that project's build checks. Then
       `5`, which shows what this session has done.
@@ -103,8 +106,9 @@ scenarios:
     script: .plumb/scripts/cockpit-remote-confirm.json
     intent: >
       The cockpit asking to confirm an action that would run on a
-      different machine. The operator moves the selection twice, landing
-      on a row whose name carries an `@machine` suffix, and presses `m`.
+      different machine. The operator moves the selection three times,
+      landing on a row whose name carries an `@machine` suffix, and
+      presses `m`.
       The final frame's footer is titled CONFIRM and holds a question
       that differs from the local confirmation in exactly one way that
       matters: it names the machine. The question says which pull
@@ -165,3 +169,51 @@ scenarios:
       border.
     touches:
       - panopticon/src/view/artifacts.rs
+
+  - name: cockpit-metrics
+    adapter: pty
+    args: target/debug/panopticon.exe --fixtures panopticon/fixtures
+    size: 120x30
+    script: .plumb/scripts/cockpit-metrics.json
+    intent: >
+      The finding, on a screen. The operator opens the metrics pane on
+      `model-experiments` — the one project here whose output is the
+      point rather than its development — and the pane shows what an
+      experiment concluded, which in this case is that nothing happened.
+      This scenario is judged on one sentence rather than on tidiness:
+      an operator who has never opened that repository can see that
+      `full` and `random_init` overlap, and that `no_ema` does not.
+      Under the metric named `effective_rank`, the first three rows are
+      `full`, `no_ema` and `random_init`. Each carries a horizontal band
+      — two end marks, and a dot for the middle measurement — positioned
+      on one shared scale, with the numbers it was drawn from printed
+      beside it. `full` and `random_init` must sit on top of one another:
+      the trained model is not distinguishable from an untrained one on
+      this metric, and that is the whole result. `no_ema` must sit
+      visibly clear of both, to the left. If those bands are not
+      comparable by eye — drawn on separate scales, or reduced to three
+      numbers with no position — the pane has failed at the only thing
+      this arc was for, however neat it looks.
+      Two further things must be true of the same frame, and either one
+      failing is a NO-GO on its own.
+      No row may be a sparkline. Every row here is three seeds of one
+      configuration and nothing orders them; a line drawn left to right
+      would assert a progression that was never measured, and would be
+      charting the order a loop happened to write in.
+      The header must not claim to be showing everything. It names the
+      file, gives two separately labelled ages, and says how many metrics
+      and how many series the feed holds — a number far larger than the
+      rows that fit. The second age reads `produced unknown` rather than
+      `0s`: this is a recording, and a producer age nobody can state is
+      said to be unknown rather than rendered as the freshest thing on
+      the screen.
+      Rows are labelled by what tells them apart, so no two rows visible
+      at once should read the same. A label longer than its column ends
+      in `...` and the numbers keep their place. A row whose label had
+      pushed its own measurements off the right-hand edge is the defect
+      this scenario was added to catch, and it is the one thing here that
+      cannot be judged from a description of the layout — only from
+      looking at it.
+    touches:
+      - panopticon/src/view/metrics.rs
+      - panopticon/src/view/render.rs

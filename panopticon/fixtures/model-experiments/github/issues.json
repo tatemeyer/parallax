@@ -1,0 +1,103 @@
+[
+  {
+    "number": 116,
+    "title": "A docs-only PR runs the full slow suite: the slow-test scope fallback is too broad",
+    "state": "open",
+    "html_url": "https://github.com/tatemeyer/Model-Experiments/issues/116",
+    "updated_at": "2026-08-21T04:16:40Z",
+    "labels": []
+  },
+  {
+    "number": 113,
+    "title": "[Intent]: where does effective_rank stop climbing, and is it duration or data? (Arc 2 Slice 1)",
+    "state": "open",
+    "html_url": "https://github.com/tatemeyer/Model-Experiments/issues/113",
+    "updated_at": "2026-08-21T03:36:29Z",
+    "labels": [
+      {
+        "name": "intent"
+      },
+      {
+        "name": "autonomy:review"
+      },
+      {
+        "name": "project:jepa"
+      }
+    ]
+  },
+  {
+    "number": 94,
+    "title": "Stale-base PRs go unnoticed; feature-branches ruleset blocks branch cleanup",
+    "state": "open",
+    "html_url": "https://github.com/tatemeyer/Model-Experiments/issues/94",
+    "updated_at": "2026-08-21T04:17:13Z",
+    "labels": [
+      {
+        "name": "enhancement"
+      }
+    ]
+  },
+  {
+    "number": 89,
+    "title": "Explore: local vision model as a low-severity verification tier in model routing",
+    "state": "open",
+    "html_url": "https://github.com/tatemeyer/Model-Experiments/issues/89",
+    "updated_at": "2026-08-05T01:44:06Z",
+    "labels": [
+      {
+        "name": "enhancement"
+      },
+      {
+        "name": "autonomy:human"
+      },
+      {
+        "name": "needs-intent"
+      }
+    ]
+  },
+  {
+    "number": 45,
+    "title": "[Intent]: does a lossy/driven cavity (breaking the conservative-Hamiltonian structure) avoid the long-horizon collapse, and does capacity matter once it's broken?",
+    "state": "open",
+    "html_url": "https://github.com/tatemeyer/Model-Experiments/issues/45",
+    "updated_at": "2026-08-20T19:09:06Z",
+    "labels": [
+      {
+        "name": "intent"
+      },
+      {
+        "name": "autonomy:human"
+      }
+    ]
+  },
+  {
+    "number": 44,
+    "title": "[Intent]: does a 2D PEC cavity reproduce the long-horizon collapse, and does capacity vs. mode-count matter there?",
+    "state": "open",
+    "html_url": "https://github.com/tatemeyer/Model-Experiments/issues/44",
+    "updated_at": "2026-08-20T19:09:03Z",
+    "labels": [
+      {
+        "name": "intent"
+      },
+      {
+        "name": "autonomy:human"
+      }
+    ]
+  },
+  {
+    "number": 43,
+    "title": "[Intent]: does a Helmholtz eigenvalue waveguide problem show capacity effects that the time-domain long-horizon problem doesn't?",
+    "state": "open",
+    "html_url": "https://github.com/tatemeyer/Model-Experiments/issues/43",
+    "updated_at": "2026-08-20T19:09:00Z",
+    "labels": [
+      {
+        "name": "intent"
+      },
+      {
+        "name": "autonomy:human"
+      }
+    ]
+  }
+]
