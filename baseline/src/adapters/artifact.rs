@@ -1,5 +1,10 @@
-//! The artifact family: files a run produced. Three built-in
-//! implementations — `figure`, `metrics`, `capture`.
+//! The artifact family: files a run produced. Four built-in
+//! implementations — `figure`, `metrics` (JSONL), `csv`, `capture`.
+//!
+//! The two metrics readers differ only in how they get from bytes to
+//! records. Everything after that — long-format detection, dimensions,
+//! the ordering claim, the grouping — is [`series_from`], shared, and
+//! written once.
 
 use super::{AdapterError, ProjectContext};
 use crate::adapters::verification::{parse_verdict, VerificationOutcome};
@@ -524,7 +529,17 @@ pub fn parse_metrics(text: &str) -> Vec<Series> {
             _ => None,
         })
         .collect();
+    series_from(records)
+}
 
+/// Groups records into named series, whatever read them.
+///
+/// This is the whole of what a metrics feed *means*, and it is
+/// deliberately one function: a second format must not be a second
+/// opinion about what a dimension is or when points may be drawn as a
+/// curve. A CSV reader is a different way to get here, not a different
+/// answer once here.
+fn series_from(records: Vec<serde_json::Map<String, serde_json::Value>>) -> Vec<Series> {
     let mut groups: BTreeMap<(String, BTreeMap<String, String>), Vec<f64>> = BTreeMap::new();
     let mut any_long_format = false;
 
@@ -559,6 +574,148 @@ pub fn parse_metrics(text: &str) -> Vec<Series> {
             order: order.clone(),
         })
         .collect()
+}
+
+/// Reads a long-format CSV metrics feed into named scalar series.
+///
+/// The shape is the one `results.csv` files in research repositories
+/// already have: a header row, one row per *measurement*, a `metric`
+/// column naming what was measured and a `value` column holding it.
+/// Every other column is a dimension — except those the manifest named
+/// as [`identifiers`], which are dropped.
+///
+/// **Why the manifest has to name them.** The JSONL reader tells a
+/// dimension from an identifier by type: a string partitions, a number
+/// does not. CSV has no types. `seed` and `steps` are both just text,
+/// and dropping the wrong one either shatters a cell into one-point
+/// series or merges a whole sweep into one. The file does not contain
+/// the answer, so the producer states it rather than this code guessing.
+///
+/// **An empty cell is an absent dimension, not an empty one.** Coverage
+/// in a real sweep is ragged — a column belongs to the experiment that
+/// varied it — and a CSV spells "this row has no `momentum`" with a
+/// blank. `momentum=` is not a value anybody measured.
+///
+/// A row whose `value` does not parse as a number is skipped, never
+/// fatal, for the reason the JSONL reader skips an unparseable line: a
+/// real producer emits ragged records and losing the file over one of
+/// them is the wrong trade.
+///
+/// A header with no `metric` or no `value` column is a different thing
+/// and **is** an error: it means the feed was declared as a shape it
+/// does not have, and returning an empty feed there is exactly the
+/// silence this adapter exists to end.
+///
+/// [`identifiers`]: crate::manifest::ArtifactEntry::identifiers
+pub fn parse_metrics_csv(text: &str, identifiers: &[String]) -> Result<Vec<Series>, AdapterError> {
+    // A hand-rolled reader would be about forty lines and would be
+    // wrong on the first quoted cell holding a comma — the JEPA feed's
+    // `params` column is embedded JSON, quotes and all.
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_reader(text.as_bytes());
+    let headers: Vec<String> = reader
+        .headers()
+        .map_err(|e| AdapterError::Parse(format!("reading the header row: {e}")))?
+        .iter()
+        .map(|column| column.trim().to_string())
+        .collect();
+
+    for required in [METRIC_FIELD, VALUE_FIELD] {
+        if !headers.iter().any(|column| column == required) {
+            return Err(AdapterError::Parse(format!(
+                "a long-format csv feed needs a `{required}` column; this one has [{}]",
+                headers.join(", ")
+            )));
+        }
+    }
+
+    let mut records = Vec::new();
+    for row in reader.records() {
+        // One malformed row is not the file's fate.
+        let Ok(row) = row else { continue };
+        let mut record = serde_json::Map::new();
+        for (column, cell) in headers.iter().zip(row.iter()) {
+            if cell.is_empty() || identifiers.iter().any(|dropped| dropped == column) {
+                continue;
+            }
+            if column == VALUE_FIELD {
+                match cell
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(serde_json::Number::from_f64)
+                {
+                    Some(number) => record.insert(column.clone(), number.into()),
+                    // Not a measurement. `observation` would reject the
+                    // record anyway; dropping it here says so once.
+                    None => break,
+                };
+            } else {
+                record.insert(column.clone(), cell.into());
+            }
+        }
+        if record.get(VALUE_FIELD).is_some_and(|v| v.is_number())
+            && record.get(METRIC_FIELD).is_some_and(|v| v.is_string())
+        {
+            records.push(record);
+        }
+    }
+    Ok(series_from(records))
+}
+
+/// Reports long-format CSV scalar series. Selected by a manifest writing
+/// `adapter: csv`.
+///
+/// Separate from [`MetricsArtifactAdapter`] rather than a mode on it,
+/// because the two answer differently when they cannot read a file and
+/// a degraded source has to say which reader was disappointed.
+pub struct CsvMetricsArtifactAdapter {
+    watch: String,
+    identifiers: Vec<String>,
+}
+
+impl CsvMetricsArtifactAdapter {
+    /// An adapter scanning `watch`, relative to the project root,
+    /// dropping the columns `identifiers` names.
+    pub fn new(watch: impl Into<String>, identifiers: Vec<String>) -> Self {
+        Self {
+            watch: watch.into(),
+            identifiers,
+        }
+    }
+}
+
+impl ArtifactAdapter for CsvMetricsArtifactAdapter {
+    fn source_name(&self) -> String {
+        "artifact:metrics:csv".into()
+    }
+
+    fn scan(
+        &mut self,
+        ctx: &ProjectContext,
+        now: SystemTime,
+    ) -> Result<Observed<Vec<Artifact>>, AdapterError> {
+        let mut artifacts = Vec::new();
+        for path in scan_glob(&ctx.root, &self.watch)? {
+            if !path.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path)?;
+            // The file is named, because "a long-format csv feed needs a
+            // `metric` column" is not actionable when a glob matched
+            // four files and one of them is a log.
+            let series = parse_metrics_csv(&text, &self.identifiers)
+                .map_err(|e| AdapterError::Parse(format!("{}: {e}", path.display())))?;
+            artifacts.push(Artifact {
+                modified: modified_at(&path),
+                path,
+                kind: ArtifactKind::Metrics,
+                detail: ArtifactDetail::Metrics { series },
+            });
+        }
+        Ok(Observed::watched(artifacts, now))
+    }
 }
 
 /// Reports JSONL scalar series. Also selected by a manifest writing

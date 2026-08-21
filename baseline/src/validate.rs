@@ -39,6 +39,24 @@ impl std::fmt::Display for ValidationError {
 }
 impl std::error::Error for ValidationError {}
 
+/// Which artifact adapter serves an entry, defaulting from its kind.
+///
+/// A free function because `validate` has to answer this before a
+/// [`Validated`] exists — the rule about `identifiers` is a rule about
+/// *which reader* an entry gets, so it cannot wait for the type that
+/// says the manifest is already fine.
+///
+/// A `metrics` feed defaults to the JSONL reader, so `csv` is only ever
+/// chosen by a manifest that says `csv`, and every manifest written
+/// before that adapter existed keeps the reader it had.
+pub fn artifact_adapter_of(entry: &ArtifactEntry) -> ArtifactAdapterKind {
+    entry.adapter.unwrap_or(match entry.kind {
+        ArtifactKind::Figure => ArtifactAdapterKind::Figure,
+        ArtifactKind::Metrics => ArtifactAdapterKind::Metrics,
+        ArtifactKind::Capture => ArtifactAdapterKind::Capture,
+    })
+}
+
 /// A manifest that passed validation. Only `validate` can build one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Validated {
@@ -68,11 +86,7 @@ impl Validated {
 
     /// Which artifact adapter serves an entry, defaulting from its kind.
     pub fn artifact_adapter(&self, entry: &ArtifactEntry) -> ArtifactAdapterKind {
-        entry.adapter.unwrap_or(match entry.kind {
-            ArtifactKind::Figure => ArtifactAdapterKind::Figure,
-            ArtifactKind::Metrics => ArtifactAdapterKind::Metrics,
-            ArtifactKind::Capture => ArtifactAdapterKind::Capture,
-        })
+        artifact_adapter_of(entry)
     }
 
     /// The Plumb config path for an entry, defaulting to
@@ -140,6 +154,28 @@ pub fn validate(manifest: Manifest) -> Result<Validated, Vec<ValidationError>> {
                 problem: format!("not a valid glob: {e}"),
             });
         }
+        // `identifiers` answers a question only CSV asks — a JSONL
+        // producer says the same thing by writing a column as a number.
+        // On any other feed the key would be read by nobody and quietly
+        // do nothing, which is a declaration nothing backs.
+        if !entry.identifiers.is_empty() && artifact_adapter_of(entry) != ArtifactAdapterKind::Csv {
+            errors.push(ValidationError {
+                field: format!("artifacts[{i}].identifiers"),
+                problem: "only a `csv` feed declares identifier columns; a JSONL producer \
+                          says the same thing by writing them as numbers"
+                    .into(),
+            });
+        }
+        if entry
+            .identifiers
+            .iter()
+            .any(|column| column.trim().is_empty())
+        {
+            errors.push(ValidationError {
+                field: format!("artifacts[{i}].identifiers"),
+                problem: "a column name here is blank".into(),
+            });
+        }
     }
 
     if let Some(sessions) = &manifest.sessions {
@@ -205,6 +241,56 @@ sessions:
         let v = validated(valid_yaml());
         let entry = &v.manifest().artifacts[0];
         assert_eq!(v.artifact_adapter(entry), ArtifactAdapterKind::Metrics);
+    }
+
+    /// The thing that could not be said before. `ArtifactAdapterKind`
+    /// is a closed enum, so a producer keeping tidy long-format CSV had
+    /// no way to declare the file it already had.
+    #[test]
+    fn a_csv_metrics_feed_can_be_declared() {
+        let yaml = "project:\n  name: x\nartifacts:\n  - kind: metrics\n    adapter: csv\n    watch: 'projects/*/results.csv'\n    identifiers: [seed]\n";
+        let v = validate(parse_manifest(yaml).unwrap()).expect("a csv feed validates");
+        let entry = &v.manifest().artifacts[0];
+        assert_eq!(v.artifact_adapter(entry), ArtifactAdapterKind::Csv);
+        assert_eq!(entry.identifiers, vec!["seed".to_string()]);
+    }
+
+    /// A `metrics` feed still means JSONL unless it says otherwise, so
+    /// every manifest written before the CSV reader existed keeps the
+    /// reader it had.
+    #[test]
+    fn a_metrics_feed_still_defaults_to_the_jsonl_reader() {
+        let yaml = "project:\n  name: x\nartifacts:\n  - kind: metrics\n    watch: 'out/*.jsonl'\n";
+        let v = validate(parse_manifest(yaml).unwrap()).unwrap();
+        assert_eq!(
+            v.artifact_adapter(&v.manifest().artifacts[0]),
+            ArtifactAdapterKind::Metrics
+        );
+    }
+
+    /// `identifiers` answers a question only CSV asks. On a JSONL feed
+    /// nobody would read it, and a key nobody reads is a declaration
+    /// nothing backs.
+    #[test]
+    fn identifier_columns_on_a_feed_that_has_types_are_refused() {
+        let yaml = "project:\n  name: x\nartifacts:\n  - kind: metrics\n    adapter: jsonl\n    watch: 'out/*.jsonl'\n    identifiers: [seed]\n";
+        let errors = validate(parse_manifest(yaml).unwrap()).expect_err("refused");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.field == "artifacts[0].identifiers" && e.problem.contains("csv")),
+            "got {errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_blank_identifier_column_is_refused() {
+        let yaml = "project:\n  name: x\nartifacts:\n  - kind: metrics\n    adapter: csv\n    watch: 'out/*.csv'\n    identifiers: ['  ']\n";
+        let errors = validate(parse_manifest(yaml).unwrap()).expect_err("refused");
+        assert!(
+            errors.iter().any(|e| e.field == "artifacts[0].identifiers"),
+            "got {errors:?}"
+        );
     }
 
     #[test]

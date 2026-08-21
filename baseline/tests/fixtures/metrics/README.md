@@ -1,7 +1,10 @@
 # Metrics fixtures
 
-Two feeds, deliberately of different **shapes**. The shape is the point:
+Three feeds. Two of them are of different **shapes**, which is the point:
 a metrics feed is not one thing, and the parser has to tell them apart.
+The third is the same measurements as the second in a different
+**format**, which is a different point: two formats must not become two
+opinions about what a dimension is.
 
 ## `loss.jsonl` — wide
 
@@ -48,3 +51,38 @@ distinguishable from an untrained one on `effective_rank` — while
 `no_ema` (1.250..1.459) separates cleanly below it. Tests assert those
 bands by value, so a regression that flattens the grouping fails
 loudly rather than rendering a plausible picture.
+
+## `sweep.csv` — the same 27 measurements, in the format they were kept in
+
+The rows above, as they actually appear in
+`tatemeyer/Model-Experiments:projects/jepa/results.csv`, header and all:
+
+```
+issue,experiment_slug,variant,seed,metric,value,params,date
+69,001-baseline-collapse-avoidance,full,0,effective_rank,2.779,"{""steps"":3000,...}",2026-08-03
+```
+
+`sweep.jsonl` was **transcoded from this file**, because until the `csv`
+artifact adapter existed a long-format CSV could not be declared in a
+manifest at all. `metrics_csv.rs` asserts the two read to the same
+series with the same points, which is the assertion that lets a producer
+stop maintaining the projection.
+
+Two things this file has that the projection does not, and both are
+deliberate:
+
+- **`params` is embedded JSON, quotes and commas and all.** It is why
+  the reader is the `csv` crate rather than forty hand-rolled lines: a
+  reader that splits on commas is wrong on the first row of the real
+  file. The projection explodes this column into one field per
+  parameter; read straight it is one opaque dimension. The *grouping* is
+  identical either way — it partitions exactly as the fields it encodes
+  do — but the label is not, and `metrics_csv.rs` says so rather than
+  hiding it.
+- **`seed` is just text.** In the JSONL it is a number, and the reader
+  drops numeric fields on an observation because they are identifiers.
+  CSV has no types, so `seed` and `steps` are indistinguishable in the
+  file and the manifest names the identifiers instead — `identifiers:
+  [seed]`. Undeclared, these 27 rows read as 27 one-point series rather
+  than 9 bands, and there is a test for exactly that, because it is the
+  failure a reader that guessed would produce.
