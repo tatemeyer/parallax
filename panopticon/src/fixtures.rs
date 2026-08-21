@@ -17,7 +17,7 @@
 use crate::refresh::BoxedPeer;
 use parallax_baseline::adapters::factory::{from_manifest_with, AdapterConfig};
 use parallax_baseline::adapters::http::{FixtureTransport, HttpTransport};
-use parallax_baseline::adapters::verification::ScriptedRunner;
+use parallax_baseline::adapters::verification::ScriptedShellRunner;
 use parallax_baseline::adapters::work::{check_runs_url, issues_url, pulls_url};
 use parallax_baseline::peers::{PeerClient, STATE_PATH};
 use parallax_baseline::registry::Registry;
@@ -216,7 +216,7 @@ pub fn load(dir: &Path) -> Result<FixtureSet, String> {
                 &project.manifest,
                 &AdapterConfig::default(),
                 move || transport_for(&root, &manifest),
-                ScriptedRunner::new,
+                ScriptedShellRunner::new,
             );
             (project.manifest.clone(), adapters)
         })
