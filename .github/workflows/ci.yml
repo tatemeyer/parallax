@@ -14,23 +14,37 @@
 #     would otherwise reach a machine before CI did.
 #   * `concurrency` cancels a superseded run when a branch is pushed
 #     again, so the answer on screen belongs to the commit being read.
-#   * Documentation-only changes skip CI, because there is no code to
-#     build. **The consequence is worth knowing:** a docs-only pull
-#     request gets no checks at all, so a branch protection rule that
-#     required them would wait on one forever.
+#
+# **Every change is checked. There is no docs-only skip**, and the two
+# reasons are worth keeping written down, because the skip looks like an
+# obvious saving and was one, once.
+#
+# The first reason is that it was **wrong**, not merely inconvenient.
+# `**/*.md` exempted `plumb/templates/taste.md`, which
+# `plumb/capture/src/cli/init.rs` pulls in with `include_str!` — so it
+# is compiled into the binary. Deleting or moving it fails
+# `cargo build`, and the filter sent exactly that change through with no
+# build at all. A path filter is a claim that a file cannot affect the
+# build, and this repository could not honestly make it.
+#
+# The second is that it blocked required checks. A workflow skipped by
+# path filtering never reports, so the check sits `Expected` forever and
+# a docs pull request can never merge. The usual fix is a second
+# workflow with matching job names that reports success — which is a
+# second place for the job list to be right, and the one that cannot see
+# the first. That is the same argument this project used to refuse a
+# client-side control list, and it lands the same way here.
+#
+# The cost is a few minutes of free compute on a docs pull request. The
+# saving was worth machinery when minutes were billed; it is not worth
+# machinery now.
 
 name: CI
 
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -74,3 +88,53 @@ jobs:
         with:
           components: clippy
       - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # The one check branch protection should require.
+  #
+  # **Not a convenience — the alternative rots silently.** Requiring the
+  # jobs directly means requiring `build (ubuntu-latest)`,
+  # `build (windows-latest)`, `test (…)`, `fmt` and `clippy` by name, in
+  # a settings page. Matrix job names are generated, so adding macOS
+  # renames nothing and adds a job nobody required; removing a matrix
+  # entry leaves a required name that never reports again and blocks
+  # every pull request. Requiring one name that is stable by
+  # construction avoids both.
+  #
+  # `if: always()` is load-bearing, and its absence is the classic way
+  # to get this exactly backwards. Without it, a failed dependency makes
+  # this job **skipped** rather than failed — and GitHub counts a
+  # skipped required check as satisfied. The gate would go green by not
+  # running, which is the one outcome worse than no gate at all.
+  #
+  # The honest caveat: the `needs` list is still a list that has to be
+  # kept current, and a job added without being added here is a job the
+  # gate does not gate. That is the same shape of flaw as requiring the
+  # names directly — but it lives in this file, next to the jobs, where
+  # a reviewer reading the diff that adds a job will see it, rather than
+  # in a settings page nobody opens.
+  gate:
+    if: always()
+    needs: [build, test, fmt, clippy]
+    runs-on: ubuntu-latest
+    steps:
+      # Single quotes inside `${{ }}` are not a style choice: GitHub's
+      # expression syntax has no double-quoted string, and `" "` here
+      # makes the whole file invalid — which shows up as a run with no
+      # jobs named after the file rather than as an error on this line.
+      #
+      # Passed through `env` rather than interpolated into the script,
+      # so the value arrives as data. Expression output spliced straight
+      # into a shell command is the standard Actions injection bug, and
+      # it costs nothing to not have it.
+      - name: Every job above must have succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "::error::a required job reported '$result'"
+              exit 1
+            fi
+          done
+          echo "all required jobs succeeded"
