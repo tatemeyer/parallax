@@ -14,8 +14,10 @@ aggregated state with per-source freshness, control actions, and the
 wire contract between machines. `panopticon`, the cockpit, observes and
 now acts, runs against the real repositories, and renders recorded state
 deterministically for review. `probe` serves one machine's state to the
-tailnet, so a cockpit on any of them shows all of them. Only the
-Model-Experiments views are still sketched.
+tailnet, so a cockpit on any of them shows all of them. The cockpit's
+metrics pane reads Model-Experiments' real feed, so what an experiment
+concluded — including when it concluded nothing — is on the same screen
+as the work that produced it.
 
 The platform spans machines as of the remote-hosts arc: TTUI is
 developed on a laptop, this repository on a desktop, and SESH on a
@@ -83,7 +85,7 @@ Named components, each carrying arcs, each arc its own spec → plan cycle.
 | `baseline` | manifests, registry, adapters, state, actions, the wire contract | — | shipped through Arc 7, plus remote hosts |
 | `panopticon` | the cockpit | `baseline`, `ttui` | shipped: observe, then control, then peers, then control across the wire |
 | `probe` | serves one machine's state to the tailnet, and acts on it when asked | `baseline` | shipped: the wire, the probe, peers, the merge, control |
-| Model-Experiments views | visualizing experiment output | `panopticon` | sketched |
+| Model-Experiments views | visualizing experiment output | `panopticon` | shipped: the metrics pane, against that project's real feed |
 
 `plumb` and `baseline` share no dependency and can proceed in parallel.
 Control came after observation deliberately — control without

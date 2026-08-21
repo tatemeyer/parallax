@@ -75,6 +75,9 @@ pub fn glyph_for(ch: char) -> Result<[u8; 8], GlyphError> {
     if let Some(bitmap) = dash_glyph_for(ch) {
         return Ok(bitmap);
     }
+    if let Some(bitmap) = mark_glyph_for(ch) {
+        return Ok(bitmap);
+    }
     BASIC_FONTS
         .get(ch)
         .or_else(|| LATIN_FONTS.get(ch))
@@ -105,6 +108,43 @@ fn dash_glyph_for(ch: char) -> Option<[u8; 8]> {
     let mut bitmap = [0u8; 8];
     bitmap[3] = row;
     Some(bitmap)
+}
+
+/// Renders the marks an interface uses to put a value *somewhere* on a
+/// scale, which `font8x8` has no table for.
+///
+/// The Parallax cockpit's metrics pane draws a row's measurements as a
+/// band on its metric's shared axis: two box-drawing ends, which
+/// `BOX_FONTS` covers, and a filled dot for the middle measurement,
+/// which it does not. So the pane whose whole purpose is to be looked at
+/// was the one pane Plumb could not capture — the run aborted on
+/// `Unmapped('\u{25cf}')` before an image existed.
+///
+/// `substitute` was the wrong answer here. A placeholder box in the
+/// position of the median is not a disclosed gap in a frame that is
+/// judged on where the marks sit; it is a different mark in the right
+/// place, which is worse than no frame at all.
+///
+/// This is the same argument [`dash_glyph_for`] was added under, and it
+/// is the second time the cockpit has made it. Both are marks a
+/// terminal interface reaches for and a text font does not carry.
+fn mark_glyph_for(ch: char) -> Option<[u8; 8]> {
+    match ch as u32 {
+        // U+25CF BLACK CIRCLE — a filled disc six pixels across, so it
+        // reads as one mark rather than as a filled cell touching its
+        // neighbours on either side.
+        0x25CF => Some([
+            0b0000_0000,
+            0b0011_1100,
+            0b0111_1110,
+            0b0111_1110,
+            0b0111_1110,
+            0b0111_1110,
+            0b0011_1100,
+            0b0000_0000,
+        ]),
+        _ => None,
+    }
 }
 
 /// Renders a Braille Patterns codepoint (U+2800-U+28FF, the block TTUI's
@@ -168,6 +208,52 @@ mod tests {
     #[test]
     fn space_and_a_resolve_to_different_bitmaps() {
         assert_ne!(glyph_for(' ').unwrap(), glyph_for('A').unwrap());
+    }
+
+    /// Every mark the Parallax cockpit's metrics pane draws, which is
+    /// the pane most in need of being looked at and the one that could
+    /// not be captured at all until `mark_glyph_for` existed.
+    ///
+    /// The ends and the fill come from `BOX_FONTS`; the median dot has
+    /// no table anywhere in `font8x8`.
+    #[test]
+    fn the_marks_a_measurement_band_is_drawn_from_resolve() {
+        for ch in ['\u{251c}', '\u{2524}', '\u{2500}', '\u{253c}', '\u{25cf}'] {
+            let bitmap = glyph_for(ch)
+                .unwrap_or_else(|e| panic!("{ch:?} is what a band is drawn from: {e:?}"));
+            assert!(
+                bitmap.iter().any(|row| *row != 0),
+                "{ch:?} resolved to a blank cell"
+            );
+        }
+    }
+
+    /// A band's two ends and its median have to be three different
+    /// marks. Where a row's whole spread lands in one cell it is drawn
+    /// as `┼`, and that has to differ from both ends too — a `├` with
+    /// no `┤` after it reads as an interval running off the row.
+    #[test]
+    fn the_marks_of_a_band_are_distinguishable_from_one_another() {
+        let marks: Vec<[u8; 8]> = ['\u{251c}', '\u{2524}', '\u{253c}', '\u{25cf}']
+            .iter()
+            .map(|ch| glyph_for(*ch).unwrap())
+            .collect();
+        for (i, a) in marks.iter().enumerate() {
+            for b in marks.iter().skip(i + 1) {
+                assert_ne!(a, b, "two marks of one band render identically");
+            }
+        }
+    }
+
+    /// Substituting a placeholder would be the wrong answer for a
+    /// median: the frame is judged on where the marks sit, so a box in
+    /// the right place is worse than no frame. The real bitmap is
+    /// returned in either mode, which is what makes that moot.
+    #[test]
+    fn a_median_dot_is_never_a_placeholder() {
+        let dot = glyph_for('\u{25cf}').unwrap();
+        assert_ne!(dot, PLACEHOLDER_BOX);
+        assert_eq!(glyph_for_mode('\u{25cf}', GlyphMode::Substitute), Ok(dot));
     }
 
     #[test]

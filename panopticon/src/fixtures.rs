@@ -364,10 +364,41 @@ mod tests {
     #[test]
     fn the_shipped_fixture_set_loads() {
         let set = load(&fixtures()).expect("the fixture set loads");
-        assert_eq!(set.projects.len(), 2, "ttui and sesh");
+        assert_eq!(set.projects.len(), 3, "model-experiments, sesh and ttui");
         assert_eq!(
             set.now,
             SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
+        );
+    }
+
+    /// The set holds one project whose *output* is the point rather
+    /// than its development, and it is recorded rather than written:
+    /// 318 real records from `Model-Experiments@main`. Two defects in
+    /// the metrics pane survived every feed that had been invented for
+    /// it and did not survive this one — see the fixture's README.
+    #[test]
+    fn one_shipped_project_carries_a_real_metrics_feed() {
+        let set = load(&fixtures()).unwrap();
+        let (me, adapters) = set
+            .projects
+            .iter()
+            .find(|(v, _)| v.manifest().project.name == "model-experiments")
+            .expect("model-experiments is in the fixture set");
+        assert!(
+            me.manifest()
+                .artifacts
+                .iter()
+                .any(|a| a.kind == parallax_baseline::manifest::ArtifactKind::Metrics),
+            "the recorded manifest still declares a metrics feed"
+        );
+        assert_eq!(
+            adapters.artifacts.len(),
+            2,
+            "the figure feed and the metrics feed"
+        );
+        assert!(
+            adapters.sessions.is_none(),
+            "that repository has no .claude/worktrees/"
         );
     }
 
