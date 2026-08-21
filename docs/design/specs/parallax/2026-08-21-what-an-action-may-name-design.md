@@ -1,7 +1,7 @@
 # Parallax — What an Action May Name (Design)
 
-**Status:** proposed, awaiting sign-off. Four open questions below.
-**Date:** 2026-08-21
+**Status:** approved and signed off 2026-08-21, with all four open
+questions answered below. Not yet implemented. **Date:** 2026-08-21
 
 **Amends:**
 `docs/design/specs/parallax/2026-08-20-control-over-the-wire-design.md`,
@@ -230,6 +230,18 @@ Concretely, two new constrained types, parsed at the edge so that
   `.plumb/config.yaml`, the way `project` is already resolved against
   the registry. A scenario the machine does not have is refused by name.
 
+**These two are not the same kind of check, and a reader should not be
+left to assume they are.** `BranchName`'s leading-`-` rule is genuine
+injection defence: it closes the argument-injection hole argv leaves
+open, and without it the arc is incomplete. `ScenarioName`'s resolution
+closes nothing — argv already removed the class it would have been depth
+against. **Its justification is typo-catching and honest failure**, not
+security: a mistyped scenario currently produces a capture that runs and
+finds nothing, and the resolution turns that into a refusal that names
+what was asked for. That is worth having on its own terms, and it is
+worth saying plainly, because a check defended as security when it is
+not is a check nobody can later reason about removing.
+
 The second is the more interesting one, and it is not a new principle —
 it is the previous arc's principle applied one level down. That arc
 established:
@@ -412,6 +424,11 @@ precisely what this arc installs.
 
 ## Open questions for sign-off
 
+**All four are answered. This document is signed off**, and the answers
+are recorded here rather than only in the pull request that carried
+them, because a decision that lives in a review thread is a decision the
+next reader does not have.
+
 1. **Does `ScenarioName` resolve against `.plumb/config.yaml`, or only
    validate a character class?**
 
@@ -435,6 +452,29 @@ precisely what this arc installs.
    back to the character class — argv has already removed the class this
    is defence in depth against.
 
+   **Answered: resolve, through the seam, with the fallback intact.**
+
+   **The seam is what makes this safe, not the resolving**, and the
+   distinction is the whole answer. Parsing Plumb's format directly
+   would put `baseline` in a position to *disagree with `plumb` about
+   what a valid scenario is* — a second place to be right about one
+   format, which is the trap this repository has now argued against
+   twice: in #47, where `gate` is required by one name because matrix
+   job names generate and rot, and in the wire spec's own question 2,
+   where a client-side control list was refused because it would be the
+   copy that could not see what it was guessing at and would go stale
+   exactly when it mattered. Going through the declared `config:`
+   pointer keeps this on the correct side of that rule. **If the seam
+   turns out to be dirty, take the character class rather than reaching
+   past it** — a coupling bought by breaking the rule costs more than
+   the check is worth.
+
+   And the check is worth less than it looks, which is the second half
+   of the answer: **typo-catching, not injection, is the justification
+   here.** Argv has already removed the class this would have been depth
+   against. Recorded in the Design section above as well, so a reader
+   meets it there rather than only here.
+
 2. **Is `Reach` a second axis, or should `Reversibility` absorb it?**
 
    Against a second enum: two classifications on eight actions is two
@@ -447,6 +487,15 @@ precisely what this arc installs.
    **Recommendation: a second axis.** The finding is the argument: any
    single scale that had to rank `TriggerCapture` would have ranked it
    wrong in one of the two directions.
+
+   **Answered: a separate axis.** `TriggerCapture` carried the
+   decision — correctly `Reversible` and catastrophically open at once,
+   and any single scale ranking it lies in one direction. The cost
+   named in the argument against stands and is accepted: two tables on
+   eight actions is two tables to keep right. What makes that
+   affordable is that both are exhaustive matches, so neither can drift
+   silently — a ninth action fails to compile until it has answered
+   both.
 
 3. **Where does a typed prompt answer get validated — cockpit,
    executing machine, or both?**
@@ -463,6 +512,16 @@ precisely what this arc installs.
    convenience that is never the only one, and a test that removes it
    and asserts the refusal still happens.
 
+   **Answered: as recommended.** The executing machine decides; the
+   cockpit may also check. This is the same principle already signed
+   off in the wire spec's question 2 — the machine that would execute is
+   the one that gets to say — applied to a value rather than to a
+   capability. **The test that removes the cockpit's check and asserts
+   the refusal still lands is what makes that a property rather than a
+   convention**, and it is not optional: without it, the cockpit's copy
+   is indistinguishable from the only copy, and the day someone deletes
+   it for being redundant is the day it was.
+
 4. **Should tier 2 eventually become argv too — manifests declaring
    `command: [npm, test]` rather than a string?**
 
@@ -475,3 +534,14 @@ precisely what this arc installs.
    **Recommendation: no, and record the reasoning here so it is not
    re-litigated.** The exemption is not a gap in the boundary; it is the
    boundary being drawn where the trust actually changes.
+
+   **Answered: no. Tier 2 does not become argv, and this is the record
+   so it is not re-litigated.** Three reasons, in the order they bind:
+   a manifest command is trusted *as code* because it is code, so argv
+   would be narrowing a value that was never in the untrusted tier;
+   SESH's `cd surfaces && npm test && npm run build` is a shell script
+   and forcing argv would push a producer to hand-roll `sh -c`, which is
+   the same capability with fewer people looking at it; and it is a
+   breaking manifest change across three repositories bought for none of
+   the safety this arc is about. A future reader who arrives at "why are
+   there two runners" should read this answer and stop.
