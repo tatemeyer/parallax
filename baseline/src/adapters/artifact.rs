@@ -11,13 +11,133 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// Whether a series' points are ordered, and by what.
+///
+/// **A curve is a claim.** Drawing points left to right asserts that
+/// each one follows the last; a flat line asserts something was
+/// measured repeatedly and did not change. Neither is true of a set of
+/// measurements that merely arrived in some order.
+///
+/// Record order is not an order. A sweep feed is written by nested
+/// loops, so the shape of a curve drawn over its record order is a fact
+/// about the writing code — re-nest the loops and the picture changes
+/// without a single measurement changing. This type exists so that
+/// difference is carried rather than assumed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SeriesOrder {
+    /// Successive points are successive values of the named field,
+    /// which was present on every record and never decreased. A curve
+    /// is a claim the feed supports.
+    By(String),
+    /// Nothing orders these points. They are repeated measurements of
+    /// one configuration — three seeds of the same cell — and the order
+    /// they arrived in means nothing.
+    Unordered,
+}
+
 /// One named scalar series read from a metrics feed.
+///
+/// **`order` is private and has no setter**, so a renderer handed one
+/// of these cannot promote a group to a curve. The claim is made where
+/// the feed is read — the only place that can see whether the feed
+/// justified it — and travels with the data. This is the same
+/// arrangement `Authorized` uses for the same reason: the dishonest
+/// thing is unrepresentable rather than merely discouraged.
+///
+/// A struct literal cannot reach past the constructors:
+///
+/// ```compile_fail
+/// use parallax_baseline::adapters::artifact::{Series, SeriesOrder};
+/// // `order` and `dimensions` are private, so this does not compile.
+/// let sneaky = Series {
+///     name: "effective_rank".into(),
+///     points: vec![2.779, 2.352, 2.791],
+///     dimensions: Default::default(),
+///     order: SeriesOrder::By("seed".into()),
+/// };
+/// ```
+///
+/// Neither can a renderer re-label a series it was given:
+///
+/// ```compile_fail
+/// use parallax_baseline::adapters::artifact::{Series, SeriesOrder};
+/// let mut series = Series::unordered("effective_rank", vec![2.779, 2.352]);
+/// // No setter, and the field is private — a group stays a group.
+/// series.order = SeriesOrder::By("seed".into());
+/// ```
+///
+/// Reading the claim is of course fine:
+///
+/// ```
+/// use parallax_baseline::adapters::artifact::{Series, SeriesOrder};
+/// let series = Series::unordered("effective_rank", vec![2.779, 2.352]);
+/// assert_eq!(*series.order(), SeriesOrder::Unordered);
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Series {
-    /// The series' key in the source records.
+    /// What was measured. For a wide feed this is the record's field
+    /// name; for a long-format feed it is the value of its `metric`
+    /// field — the measurement's own name, not the column holding it.
     pub name: String,
-    /// Its values, in the order they were recorded.
+    /// Its values, in the order they were recorded — which is only
+    /// meaningful when `order` says so.
     pub points: Vec<f64>,
+    /// What distinguishes this series from others of the same `name`:
+    /// the string fields of a long-format record, such as
+    /// `variant=full`. Empty for a wide feed, which has no room to
+    /// express one.
+    dimensions: BTreeMap<String, String>,
+    /// Whether `points` may be drawn as a curve.
+    order: SeriesOrder,
+}
+
+impl Series {
+    /// A series whose points nothing orders.
+    pub fn unordered(name: impl Into<String>, points: Vec<f64>) -> Self {
+        Self {
+            name: name.into(),
+            points,
+            dimensions: BTreeMap::new(),
+            order: SeriesOrder::Unordered,
+        }
+    }
+
+    /// A series whose points are successive values of `by`.
+    ///
+    /// The caller is asserting the feed justified it. `parse_metrics`
+    /// only calls this having checked; nothing reconstructs a series it
+    /// was handed in order to change the answer.
+    pub fn ordered(name: impl Into<String>, points: Vec<f64>, by: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            points,
+            dimensions: BTreeMap::new(),
+            order: SeriesOrder::By(by.into()),
+        }
+    }
+
+    /// The same series, distinguished by `dimensions`.
+    pub fn with_dimensions<K, V>(mut self, dimensions: impl IntoIterator<Item = (K, V)>) -> Self
+    where
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.dimensions = dimensions
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        self
+    }
+
+    /// Whether these points may be drawn as a curve.
+    pub fn order(&self) -> &SeriesOrder {
+        &self.order
+    }
+
+    /// What distinguishes this series from others of the same name.
+    pub fn dimensions(&self) -> &BTreeMap<String, String> {
+        &self.dimensions
+    }
 }
 
 /// What an adapter learned about an artifact beyond its path.
@@ -30,7 +150,9 @@ pub enum ArtifactDetail {
     },
     /// Scalar series parsed from a JSONL feed.
     Metrics {
-        /// Every series found, sorted by name.
+        /// Every series found, sorted by name and then by dimensions —
+        /// so the variants of one metric arrive adjacent, which is the
+        /// order they have to be compared in.
         series: Vec<Series>,
     },
     /// A Plumb run directory.
@@ -299,32 +421,132 @@ impl ArtifactAdapter for CaptureArtifactAdapter {
     }
 }
 
+/// A long-format record names its metric here.
+const METRIC_FIELD: &str = "metric";
+/// A long-format record carries its measurement here.
+const VALUE_FIELD: &str = "value";
+/// The fields a wide feed may use to order its records, in the order
+/// they are tried.
+const ORDERING_FIELDS: [&str; 3] = ["step", "epoch", "iteration"];
+
+/// A record's contribution to one series: its key, and its value.
+type Keyed = ((String, BTreeMap<String, String>), f64);
+
+/// Reads a long-format record — one that names its own metric.
+///
+/// The shape is `{"metric": "effective_rank", "value": 2.779, ...}`:
+/// one record per *measurement* rather than per timestep. Its remaining
+/// **string** fields are dimensions — `variant`, `experiment` — and
+/// become part of the key, because they are what distinguishes two
+/// series of the same metric.
+///
+/// Its remaining **numeric** fields are not charted. On a wide record a
+/// number is a measurement; here the measurement is already named, so a
+/// second number is an identifier — an issue number, a seed index — and
+/// the one thing it must not become is a series. Note the asymmetry is
+/// the point: `seed` is deliberately not part of the key either, since
+/// the three seeds of one cell are the repeated measurements whose
+/// spread carries the result.
+fn observation(record: &serde_json::Map<String, serde_json::Value>) -> Option<Keyed> {
+    let name = record.get(METRIC_FIELD)?.as_str()?.to_string();
+    let value = record.get(VALUE_FIELD)?.as_f64()?;
+    let dimensions = record
+        .iter()
+        .filter(|(key, _)| key.as_str() != METRIC_FIELD)
+        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+        .collect();
+    Some(((name, dimensions), value))
+}
+
+/// Whether a wide feed's records are ordered, and by what.
+///
+/// Demanding the field be present on *every* record and never decrease
+/// is deliberately strict. The claim being made is that successive
+/// points are successive steps, and a feed missing the field on one
+/// record in fifty does not support it.
+fn ordering(records: &[serde_json::Map<String, serde_json::Value>]) -> SeriesOrder {
+    // One record cannot establish an order, and an empty file cannot
+    // either — both would otherwise pass the checks below vacuously.
+    if records.len() < 2 {
+        return SeriesOrder::Unordered;
+    }
+    for field in ORDERING_FIELDS {
+        let values: Vec<f64> = records
+            .iter()
+            .filter_map(|record| record.get(field)?.as_f64())
+            .collect();
+        if values.len() == records.len() && values.windows(2).all(|pair| pair[0] <= pair[1]) {
+            return SeriesOrder::By(field.to_string());
+        }
+    }
+    SeriesOrder::Unordered
+}
+
 /// Parses a JSONL metrics feed into named scalar series.
 ///
-/// One record per line, each a JSON object. Numeric fields become
-/// series points in record order; non-numeric fields and unparseable
-/// lines are skipped, never coerced and never fatal — a real producer
-/// emits ragged records and string annotations, and losing the whole
-/// file over one of them would be the wrong trade.
+/// One record per line, each a JSON object. Unparseable lines are
+/// skipped, never fatal — a real producer emits ragged records, and
+/// losing the whole file over one of them would be the wrong trade.
+///
+/// **Two shapes, told apart by the records themselves.** A *wide*
+/// record is one timestep and every numeric field is a metric. A
+/// *long-format* record is one measurement that names itself, via a
+/// string `metric` and a numeric `value`. Both are real; the JEPA
+/// sweep in `tests/fixtures/metrics/` is the second, and reading it as
+/// the first charts its issue numbers and heaps three unrelated metrics
+/// onto one axis.
+///
+/// **A curve is only claimed when the feed justifies it.** A long-format
+/// feed never justifies it: its records are measurements of separate
+/// configurations, and their order is the writing loop's nesting. A wide
+/// feed justifies it only via a monotonic ordering field. Anything else
+/// is `Unordered`, which under-claims — the safe direction, because the
+/// cost of drawing a curve that is not there is a reader believing a
+/// trend that does not exist.
 pub fn parse_metrics(text: &str) -> Vec<Series> {
-    let mut series: BTreeMap<String, Vec<f64>> = BTreeMap::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
+    let records: Vec<serde_json::Map<String, serde_json::Value>> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| match serde_json::from_str(line) {
+            Ok(serde_json::Value::Object(record)) => Some(record),
+            _ => None,
+        })
+        .collect();
+
+    let mut groups: BTreeMap<(String, BTreeMap<String, String>), Vec<f64>> = BTreeMap::new();
+    let mut any_long_format = false;
+
+    for record in &records {
+        if let Some((key, value)) = observation(record) {
+            any_long_format = true;
+            groups.entry(key).or_default().push(value);
             continue;
         }
-        let Ok(serde_json::Value::Object(record)) = serde_json::from_str(line) else {
-            continue;
-        };
         for (key, value) in record {
             if let Some(number) = value.as_f64() {
-                series.entry(key).or_default().push(number);
+                groups
+                    .entry((key.clone(), BTreeMap::new()))
+                    .or_default()
+                    .push(number);
             }
         }
     }
-    series
+
+    let order = if any_long_format {
+        SeriesOrder::Unordered
+    } else {
+        ordering(&records)
+    };
+
+    groups
         .into_iter()
-        .map(|(name, points)| Series { name, points })
+        .map(|((name, dimensions), points)| Series {
+            name,
+            points,
+            dimensions,
+            order: order.clone(),
+        })
         .collect()
 }
 
