@@ -109,6 +109,16 @@ follow, and only one of them is security:
   and the tailnet's ACLs decide who may reach it. Anyone who can `POST`
   could equally have opened an SSH session to the same machine.
 
+  > **Amended** by `2026-08-21-what-an-action-may-name-design.md`. This
+  > bullet is still true and is still the right thing to have written.
+  > What that document adds is what follows from it: because a remote
+  > caller computes its own fingerprint, *every* action is effectively
+  > unconfirmed on the wire — so confirmation cannot be the thing that
+  > gates a parameter, and `Push` being `ConfirmationRequired` did not
+  > protect its `branch` field from reaching `sh -c`. The reliance was
+  > never stated here, because nothing depended on it yet. It does now,
+  > and the boundary moved to the parameter rather than to the prompt.
+
 ### A submission is not an execution
 
 `POST /action` **enqueues**. It does not run the action and return the

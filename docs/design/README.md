@@ -20,7 +20,8 @@ argument for retiring them.
   tiers, the three-axis autonomy model, the `parallax.yaml` manifest,
   the registry and adapter factory, and — because it is a contract every
   component shares rather than one component's concern — the wire format
-  a probe serves and a cockpit reads.
+  a probe serves and a cockpit reads, and the trust tiers that say which
+  values on that wire may be interpreted rather than merely passed.
 - `plumb/` — perceptual verification. Portable capture adapters plus a
   blinded, adversarial multi-lens reviewer rendering GO / NO-GO / HOLD.
 - `panopticon/` — **implemented**: the cockpit. A TUI over
