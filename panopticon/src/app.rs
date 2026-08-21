@@ -365,6 +365,7 @@ impl Panopticon {
                 Tab::Work => crate::view::work::work_rows(p).len(),
                 Tab::Verification => p.verification.len().max(1),
                 Tab::Artifacts => crate::view::artifacts::artifact_rows(p).len(),
+                Tab::Metrics => crate::view::metrics::metric_feeds(p, self.clock.now()).len(),
                 Tab::Sessions => crate::view::sessions::session_rows(p, self.clock.now()).len(),
                 Tab::Log => self.control.log().len(),
             })

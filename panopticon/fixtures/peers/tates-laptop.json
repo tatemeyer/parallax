@@ -1,5 +1,5 @@
 {
-  "apiVersion": "parallax/v1",
+  "apiVersion": "parallax/v2",
   "peer": "tates-laptop",
   "now": { "secs_since_epoch": 1700000000, "nanos_since_epoch": 0 },
   "projects": [

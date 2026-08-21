@@ -249,7 +249,7 @@ fn the_shipped_fixture_set_holds_a_peer_that_loads_identically_twice() {
 /// by name rather than parsed optimistically.
 #[test]
 fn a_peer_speaking_a_future_version_is_refused_by_name() {
-    let body = envelope("pi5", &["sesh"], at(0)).replace("parallax/v1", "parallax/v2");
+    let body = envelope("pi5", &["sesh"], at(0)).replace("parallax/v2", "parallax/v3");
     let updates = refresh(vec![peer("pi5", body)]);
 
     let failed: Vec<&str> = updates
@@ -261,5 +261,5 @@ fn a_peer_speaking_a_future_version_is_refused_by_name() {
         .collect();
 
     assert_eq!(failed.len(), 1, "got {updates:?}");
-    assert!(failed[0].contains("parallax/v2"), "got {}", failed[0]);
+    assert!(failed[0].contains("parallax/v3"), "got {}", failed[0]);
 }

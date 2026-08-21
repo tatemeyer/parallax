@@ -123,7 +123,7 @@ mod tests {
         Artifact {
             path: std::path::PathBuf::from("/tmp").join(name),
             kind,
-            modified: at(0),
+            modified: Some(at(0)),
             detail,
         }
     }

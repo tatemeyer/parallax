@@ -46,14 +46,14 @@ OPTIONS:
     -h, --help             This.
 
 KEYS:
-    j / k     move within the detail pane      1-5  choose a pane
+    j / k     move within the detail pane      1-6  choose a pane
     Tab       next project                     r    refresh the readable sources
     c / C     run this project's / every project's build checks
 
     l         label the selected work item     R    request a re-review
     p         capture this project             P    push a branch  (confirm)
     m         merge the selected pull request  (type its number to confirm)
-    5         what this session has done
+    5         what this session has done      6    what the experiments measured
 
     ?         help                             q    quit
 

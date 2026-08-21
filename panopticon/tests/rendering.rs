@@ -439,7 +439,7 @@ fn hostile_project() -> ProjectState {
         vec![Artifact {
             path: PathBuf::from("/tmp/\u{1b}[31mrun-01"),
             kind: ArtifactKind::Capture,
-            modified: at(0),
+            modified: Some(at(0)),
             detail: ArtifactDetail::Capture {
                 run_id: "\u{1b}]0;retitled\u{7}run-01".into(),
                 outcome: VerificationOutcome::Fail,

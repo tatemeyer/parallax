@@ -11,7 +11,7 @@
 use crate::view::model::{Declared, Health, RailRow};
 use crate::view::sanitize::sanitize;
 use crate::view::status::SourceCell;
-use crate::view::{artifacts, model, sessions, status, verification, work};
+use crate::view::{artifacts, metrics, model, sessions, status, verification, work};
 use parallax_baseline::state::{PlatformState, ProjectState};
 use std::time::SystemTime;
 use ttui::buffer::{Buffer, Cell};
@@ -34,16 +34,25 @@ pub enum Tab {
     /// What this session has done. The one tab that is not about the
     /// selected project — every entry names its own.
     Log,
+    /// What the experiments measured. The one tab that is not about
+    /// software being built.
+    Metrics,
 }
 
 impl Tab {
-    /// The five tabs, in the order `1`–`5` select them.
-    pub const ALL: [Tab; 5] = [
+    /// The six tabs, in the order `1`–`6` select them.
+    ///
+    /// `Metrics` is last so that every existing key keeps its meaning:
+    /// `1`–`4` and `5`-for-the-log are unchanged, and the new pane
+    /// takes the first free number. Position is the mapping — key `n`
+    /// is `ALL[n - 1]` — so there is no off-by-one to remember.
+    pub const ALL: [Tab; 6] = [
         Tab::Work,
         Tab::Verification,
         Tab::Artifacts,
         Tab::Sessions,
         Tab::Log,
+        Tab::Metrics,
     ];
 
     /// The tab's label in the detail header.
@@ -54,6 +63,7 @@ impl Tab {
             Tab::Artifacts => "ARTIFACTS",
             Tab::Sessions => "SESSIONS",
             Tab::Log => "LOG",
+            Tab::Metrics => "METRICS",
         }
     }
 }
@@ -198,6 +208,7 @@ fn render_detail(frame: &Frame<'_>, area: Rect, theme: &Theme, buf: &mut Buffer)
         Tab::Work => work_lines(frame, project),
         Tab::Verification => verification_lines(frame, project),
         Tab::Artifacts => artifact_lines(project),
+        Tab::Metrics => metrics_lines(frame, project),
         Tab::Sessions => session_lines(frame, project),
         Tab::Log => log_lines(frame),
     }
@@ -280,6 +291,143 @@ fn artifact_lines(project: &ProjectState) -> Vec<String> {
     }
     rows.iter()
         .map(|r| format!("{:<9} {:<26} {}", r.kind, r.name, r.summary))
+        .collect()
+}
+
+/// What the experiments measured.
+///
+/// Two ages in the feed's header, because a curve read two seconds ago
+/// from a run that died an hour back is fresh and stalled at once. Then
+/// one block per metric, its rows drawn against that metric's own
+/// scale.
+fn metrics_lines(frame: &Frame<'_>, project: &ProjectState) -> Vec<String> {
+    let feeds = metrics::metric_feeds(project, frame.now);
+    if feeds.is_empty() {
+        return vec!["no metrics feeds".to_string()];
+    }
+
+    let mut lines = Vec::new();
+    for feed in &feeds {
+        let produced = match feed.produced {
+            Some(age) => format!("produced {}s ago", age.as_secs()),
+            // Not "0s", and not a date from 1970. Nobody could say.
+            None => "produced unknown".to_string(),
+        };
+        lines.push(format!(
+            "{}   read {}s ago · {produced}",
+            feed.name,
+            feed.read.as_secs()
+        ));
+
+        for group in &feed.groups {
+            lines.push(format!("  {}", group.name));
+            for row in &group.rows {
+                let label = if row.label.is_empty() {
+                    "—".to_string()
+                } else {
+                    row.label.clone()
+                };
+                lines.push(format!(
+                    "    {:<24} {:>4}  {}",
+                    label,
+                    row.points,
+                    shape_line(&row.shape, group.axis)
+                ));
+            }
+        }
+    }
+    lines
+}
+
+/// One row's values, in the only form its shape licenses.
+fn shape_line(shape: &metrics::RowShape, axis: Option<(f64, f64)>) -> String {
+    match shape {
+        // A curve is the only shape that earns a sparkline, and the
+        // point count printed beside it is what keeps the summary
+        // honest when fifty cells stand in for four thousand points.
+        metrics::RowShape::Curve { by, points } => {
+            format!("{} (by {by})", spark(points, axis))
+        }
+        // Positioned on the group's shared scale, not just printed.
+        // Three variants whose numbers overlap are three bands that
+        // visibly overlap, which is the difference between a reader
+        // seeing a null result and a reader doing arithmetic.
+        metrics::RowShape::Spread { min, median, max } => {
+            format!(
+                "{} {min:.4} {median:.4} {max:.4}",
+                track(*min, *median, *max, axis)
+            )
+        }
+        // No line, no bar: one measurement rendered as a value.
+        metrics::RowShape::Single(value) => format!("{value:.4}"),
+        // Not zero. Zero is a measurement.
+        metrics::RowShape::Empty => "parsed, no points".to_string(),
+    }
+}
+
+/// How many cells a spread's band is drawn across.
+const TRACK: usize = 24;
+
+/// One row's measurements as a band on its group's shared scale.
+///
+/// `├` and `┤` are the extremes, `●` the median, and position is what
+/// carries the meaning: two variants whose bands sit on top of each
+/// other did not differ, and one that sits clear of the rest did. That
+/// comparison is the entire content of a null result, and it is not
+/// available from three numbers printed in a column.
+fn track(min: f64, median: f64, max: f64, axis: Option<(f64, f64)>) -> String {
+    let (lo, hi) = axis.unwrap_or((min, max));
+    let span = hi - lo;
+    let cell = |value: f64| -> usize {
+        if span <= 0.0 {
+            // Every measurement in the group identical. One mark at the
+            // left rather than a band spanning a range nothing varied
+            // across.
+            return 0;
+        }
+        (((value - lo) / span) * (TRACK - 1) as f64).round() as usize
+    };
+
+    let (first, middle, last) = (cell(min), cell(median), cell(max));
+    (0..TRACK)
+        .map(|i| {
+            // Edges before the median. Where a median rounds onto an
+            // extreme they are within a cell of each other anyway, and
+            // a band that appears to stop at its median understates how
+            // far the measurements actually reached — which is the one
+            // thing this row exists to show.
+            if i == first {
+                '├'
+            } else if i == last {
+                '┤'
+            } else if i == middle {
+                '●'
+            } else if i > first && i < last {
+                '─'
+            } else {
+                ' '
+            }
+        })
+        .collect()
+}
+
+/// A sparkline over a group's shared scale, so two rows of one metric
+/// are comparable rather than each filling its own height.
+fn spark(points: &[f64], axis: Option<(f64, f64)>) -> String {
+    const RAMP: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let (min, max) = axis.unwrap_or((0.0, 0.0));
+    let span = max - min;
+    points
+        .iter()
+        .map(|point| {
+            if span <= 0.0 {
+                // Every point identical: the middle of the ramp says
+                // "flat", where the bottom would read as "zero".
+                return RAMP[RAMP.len() / 2];
+            }
+            let scaled = ((point - min) / span * (RAMP.len() - 1) as f64).round() as usize;
+            RAMP[scaled.min(RAMP.len() - 1)]
+        })
         .collect()
 }
 
