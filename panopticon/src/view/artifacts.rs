@@ -185,14 +185,8 @@ mod tests {
                     ArtifactKind::Metrics,
                     ArtifactDetail::Metrics {
                         series: vec![
-                            Series {
-                                name: "loss".into(),
-                                points: vec![2.7, 2.1, 1.6],
-                            },
-                            Series {
-                                name: "probe_acc".into(),
-                                points: vec![0.1, 0.2],
-                            },
+                            Series::ordered("loss", vec![2.7, 2.1, 1.6], "step"),
+                            Series::ordered("probe_acc", vec![0.1, 0.2], "step"),
                         ],
                     },
                 )],
