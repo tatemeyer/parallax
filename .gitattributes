@@ -1,0 +1,9 @@
+# This repository is Windows-first, and `.github/scripts/*.sh` is executed by a
+# Linux runner. A shell script committed with CRLF fails there on its shebang
+# line -- `/usr/bin/env: 'bash\r': No such file or directory` -- which names
+# neither the file nor the line ending, so the error points nowhere near the
+# mistake.
+#
+# `core.autocrlf=true` already prevents this, but that is per-machine
+# configuration and is not carried by a clone. This is.
+*.sh text eol=lf
