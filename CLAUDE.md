@@ -39,6 +39,20 @@ There is **no docs-only skip**, deliberately. See the header of
 `.github/workflows/ci.yml` for why; the short version is that `**/*.md` exempted
 a file that `include_str!` compiles into the binary.
 
+**`strict` is on as of 2026-08-21: a PR must be up to date with `main` before it
+merges.** So when `main` moves under an open PR, `gate` passing is no longer
+enough — update the branch and let it re-run:
+
+```
+gh pr update-branch <n>
+```
+
+This is not theoretical. #56 was green against a base without slice 4 while both
+touched `series_from`, and the branch was updated by hand before merging. That
+should not depend on someone noticing. The cost is one command per PR when the
+base moves; the alternative is a green check that verified a combination nobody
+ever built.
+
 ## Diagnosing branch protection
 
 **Check both endpoints. Neither one alone means "unprotected".**
