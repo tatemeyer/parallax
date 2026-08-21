@@ -1,6 +1,10 @@
 # Metrics in the Cockpit
 
-**Status:** proposed — awaiting sign-off. Nothing here is implemented.
+**Status:** signed off. Planned, not yet implemented — see
+`docs/design/plans/parallax/2026-08-20-metrics-in-the-cockpit-plan.md`,
+which answers open question 2 below, revises question 3, and records
+three assumptions in this document that did not survive contact with the
+feed that actually exists.
 **Date:** 2026-08-20
 **Size:** one arc.
 **Amends:** nothing. It is the first arc of the last component the
@@ -233,6 +237,30 @@ nothing**. It is still not in this arc.
    produce a real manifest against the real directory rather than a
    fixture, so the arc is exercised against a messy producer the way the
    platform spec intended.
+
+   **Answered — and the recommendation above was wrong.** It *is*
+   registered. `Model-Experiments@main:parallax.yaml` declares
+   `kind: metrics, adapter: jsonl, watch: projects/*/results/**/*.jsonl`.
+   The sentence "appears in no manifest in this repository" was true and
+   misleading: a project's manifest lives in *its own* repository, which
+   is the whole design of the registry, so its absence here was never
+   evidence of anything.
+
+   The real problem is one this question did not think to ask.
+   **Nothing backs the declared feed** — no code in that repository
+   writes JSONL, and `results/` does not exist. Meanwhile the data does:
+   `projects/jepa/results.csv`, checked in, 318 rows, **long-format**
+   (`variant, seed, metric, value`) rather than the wide shape
+   `parse_metrics` assumes. Fed the shape that exists, the shipping
+   parser charts `issue` and `seed` as if they were measurements and
+   concatenates `effective_rank` with `embedding_std` into one series on
+   one axis.
+
+   So the first slice is not "write a manifest". It is "stop the parser
+   inventing curves", and the feed decision is a real decision spanning
+   two repositories. Both are carried by
+   `docs/design/plans/parallax/2026-08-20-metrics-in-the-cockpit-plan.md`,
+   which also revises question 3 below against the real cardinality.
 
 3. **Which series, when there are many?** A training run can emit
    dozens. Showing all of them makes a pane that scrolls forever;
