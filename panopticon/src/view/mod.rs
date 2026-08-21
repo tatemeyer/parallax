@@ -7,6 +7,7 @@
 //! interesting cases cheap to test.
 
 pub mod artifacts;
+pub mod metrics;
 pub mod model;
 pub mod render;
 pub mod sanitize;

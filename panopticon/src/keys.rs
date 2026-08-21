@@ -144,6 +144,16 @@ pub fn binder() -> InputBinder<Action> {
     b.bind(KeyPress::plain(KeyCode::Char('u')), Action::Uphold);
     b.bind(KeyPress::plain(KeyCode::Char('o')), Action::Overrule);
     b.bind(KeyPress::plain(KeyCode::Char('5')), Action::ActionLog);
+    // Metrics is `6`, and sits after the log in `Tab::ALL` so that key
+    // `n` is `Tab::ALL[n - 1]` with no off-by-one to remember.
+    //
+    // The obvious mnemonic was taken: `m` merges a pull request. Worth
+    // knowing why that is not merely untidy — **`bind` appends to a
+    // list and `feed` takes the first match, so a second binding for a
+    // key is silently dead.** Binding `m` to this tab does not shadow
+    // the merge; it does nothing at all, and the new pane would have
+    // been unreachable by any key while every test stayed green.
+    b.bind(KeyPress::plain(KeyCode::Char('6')), Action::Tab(6));
     b.bind(KeyPress::plain(KeyCode::Char('?')), Action::Help);
     b.bind(KeyPress::plain(KeyCode::Char('q')), Action::Quit);
     b
@@ -219,6 +229,72 @@ mod tests {
                 Some(Action::Quit)
             ]
         );
+    }
+
+    /// Every key still reaches the action it is supposed to.
+    ///
+    /// Added because the metrics tab was first bound to `m`, which was
+    /// already `Merge`. **No test noticed**, because a duplicate
+    /// binding is not an error and not an override — `bind` appends and
+    /// `feed` takes the first match, so the second one is simply dead.
+    /// The suite stayed green while the new pane had no working key.
+    ///
+    /// The mutating verbs are listed alongside the tabs deliberately: a
+    /// future collision is as likely to silence `P` or `m` as to
+    /// silence a tab, and the failure looks the same from here — a key
+    /// that quietly stopped doing what the help text says.
+    #[test]
+    fn every_key_still_reaches_the_action_it_names() {
+        let bound: Vec<Option<Action>> = resolve(&[
+            press(KeyCode::Char('m'), KeyModifiers::NONE),
+            press(KeyCode::Char('p'), KeyModifiers::NONE),
+            press(KeyCode::Char('l'), KeyModifiers::NONE),
+            press(KeyCode::Char('u'), KeyModifiers::NONE),
+            press(KeyCode::Char('o'), KeyModifiers::NONE),
+            press(KeyCode::Char('5'), KeyModifiers::NONE),
+            press(KeyCode::Char('6'), KeyModifiers::NONE),
+        ]);
+        assert_eq!(
+            bound,
+            vec![
+                Some(Action::Merge),
+                Some(Action::Capture),
+                Some(Action::Label),
+                Some(Action::Uphold),
+                Some(Action::Overrule),
+                // `5` is the log's own verb rather than `Tab(5)`, which
+                // is why the metrics pane could not simply take `5`.
+                Some(Action::ActionLog),
+                Some(Action::Tab(6)),
+            ]
+        );
+    }
+
+    /// Every tab is reachable. The number keys map to `Tab::ALL`
+    /// positionally, so a tab added without a key is a pane that exists
+    /// and cannot be opened.
+    #[test]
+    fn every_tab_has_a_key_that_opens_it() {
+        use crate::view::render::Tab;
+
+        for (index, _) in Tab::ALL.iter().enumerate() {
+            let number = index + 1;
+            let key = char::from_digit(number as u32, 10).unwrap();
+            let resolved = resolve(&[press(KeyCode::Char(key), KeyModifiers::NONE)]);
+
+            let opens_this_tab = match resolved[0] {
+                Some(Action::Tab(n)) => n as usize == number,
+                // The log has its own verb, which lands on the same tab.
+                Some(Action::ActionLog) => Tab::ALL[index] == Tab::Log,
+                _ => false,
+            };
+            assert!(
+                opens_this_tab,
+                "key `{key}` does not open {:?}: got {:?}",
+                Tab::ALL[index],
+                resolved[0]
+            );
+        }
     }
 
     #[test]
