@@ -4,7 +4,7 @@
 
 use panopticon::refresh::{Clock, Refresher, Request, Update};
 use parallax_baseline::adapters::verification::{
-    CheckCost, CommandOutput, CommandRunner, CommandVerificationAdapter, VerificationAdapter,
+    CheckCost, CommandOutput, CommandVerificationAdapter, ShellRunner, VerificationAdapter,
 };
 use parallax_baseline::adapters::work::{WorkAdapter, WorkSnapshot};
 use parallax_baseline::adapters::{AdapterError, ProjectContext};
@@ -60,7 +60,7 @@ struct CountingRunner {
     calls: Arc<AtomicUsize>,
 }
 
-impl CommandRunner for CountingRunner {
+impl ShellRunner for CountingRunner {
     fn run(&mut self, _command: &str, _cwd: &Path) -> std::io::Result<CommandOutput> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(CommandOutput {

@@ -3,7 +3,7 @@
 
 use parallax_baseline::adapters::factory::{from_manifest, from_manifest_with, AdapterConfig};
 use parallax_baseline::adapters::http::FixtureTransport;
-use parallax_baseline::adapters::verification::{CheckCost, ScriptedRunner};
+use parallax_baseline::adapters::verification::{CheckCost, ScriptedShellRunner};
 use parallax_baseline::manifest::parse_manifest_file;
 use parallax_baseline::state::ProjectAdapters;
 use parallax_baseline::validate::{validate, Validated};
@@ -24,7 +24,7 @@ fn built(name: &str) -> ProjectAdapters {
         &load(name),
         &AdapterConfig::default(),
         FixtureTransport::new,
-        ScriptedRunner::new,
+        ScriptedShellRunner::new,
     )
 }
 
@@ -103,7 +103,7 @@ fn a_work_only_manifest_builds_exactly_one_adapter() {
         &validated,
         &AdapterConfig::default(),
         FixtureTransport::new,
-        ScriptedRunner::new,
+        ScriptedShellRunner::new,
     );
     assert_eq!(shape(&a), (1, 0, 0, 0));
 }
@@ -128,7 +128,7 @@ fn a_csv_metrics_feed_builds_the_csv_reader_with_its_identifier_columns() {
         &validated,
         &AdapterConfig::default(),
         FixtureTransport::new,
-        ScriptedRunner::new,
+        ScriptedShellRunner::new,
     );
     let names: Vec<String> = adapters.artifacts.iter().map(|a| a.source_name()).collect();
     assert_eq!(names, ["artifact:metrics:csv"]);

@@ -13,7 +13,8 @@ use super::artifact::{
 use super::http::{HttpTransport, UreqTransport};
 use super::session::FilesystemSessionAdapter;
 use super::verification::{
-    CommandRunner, CommandVerificationAdapter, PlumbVerificationAdapter, ProcessRunner,
+    CommandVerificationAdapter, PlumbVerificationAdapter, ProcessProgramRunner, ProcessShellRunner,
+    ShellRunner,
 };
 use super::work::GithubWorkAdapter;
 use crate::actions::{GithubWorkControl, LocalExecutor, LocalProcessControl};
@@ -80,7 +81,7 @@ pub fn from_manifest_with<T, R>(
 ) -> ProjectAdapters
 where
     T: HttpTransport + Send + 'static,
-    R: CommandRunner + Send + 'static,
+    R: ShellRunner + Send + 'static,
 {
     let manifest = validated.manifest();
     let mut adapters = ProjectAdapters::new();
@@ -137,10 +138,15 @@ where
 }
 
 /// Builds a project's adapters against the live world: `UreqTransport`
-/// for work, `ProcessRunner` for `command` verification.
+/// for work, `ProcessShellRunner` for `command` verification.
 ///
 /// This is the only place those two are named, which keeps the network
 /// and process seams countable.
+///
+/// The runner here is the **shell** one, and that is correct: a
+/// `verification[].command` is a manifest-declared string, trusted as
+/// code because it is code. The executor built by [`executor_for`] takes
+/// the other runner, for the opposite reason.
 pub fn from_manifest(validated: &Validated, config: &AdapterConfig) -> ProjectAdapters {
     let token = config.github_token.clone();
     from_manifest_with(
@@ -150,12 +156,18 @@ pub fn from_manifest(validated: &Validated, config: &AdapterConfig) -> ProjectAd
             Some(t) => UreqTransport::with_token(t.clone()),
             None => UreqTransport::new(),
         },
-        || ProcessRunner,
+        || ProcessShellRunner,
     )
 }
 
-/// The executor for one project: GitHub for work, the local shell for
+/// The executor for one project: GitHub for work, a `ProgramRunner` for
 /// processes, rulings appended beside the project's Plumb state.
+///
+/// **Not a shell, deliberately** — this used to say "the local shell for
+/// processes" and it was an accurate description of a defect. Everything
+/// reachable through this executor carries values that arrived from
+/// outside: an action's fields off the wire, and whatever the operator
+/// typed at a prompt. See `LocalProcessControl`.
 ///
 /// `None` when the project declares no work feed — there is nothing for
 /// a work action to address, and an executor that cannot name a
@@ -164,7 +176,9 @@ pub fn from_manifest(validated: &Validated, config: &AdapterConfig) -> ProjectAd
 pub fn executor_for(
     validated: &Validated,
     config: &AdapterConfig,
-) -> Option<LocalExecutor<GithubWorkControl<UreqTransport>, LocalProcessControl<ProcessRunner>>> {
+) -> Option<
+    LocalExecutor<GithubWorkControl<UreqTransport>, LocalProcessControl<ProcessProgramRunner>>,
+> {
     let work = validated.manifest().work.as_ref()?;
     let transport = match &config.github_token {
         Some(t) => UreqTransport::with_token(t.clone()),
@@ -182,7 +196,7 @@ pub fn executor_for(
         work.repo.clone(),
         root.join(".plumb").join("rulings.jsonl"),
         GithubWorkControl::new(transport),
-        LocalProcessControl::new(ProcessRunner, root),
+        LocalProcessControl::new(ProcessProgramRunner, root),
     ))
 }
 
@@ -202,7 +216,7 @@ mod config_tests {
 mod translation_tests {
     use super::*;
     use crate::adapters::http::FixtureTransport;
-    use crate::adapters::verification::{CheckCost, ScriptedRunner};
+    use crate::adapters::verification::{CheckCost, ScriptedShellRunner};
     use crate::manifest::parse_manifest;
     use crate::validate::validate;
 
@@ -212,7 +226,7 @@ mod translation_tests {
             &validated,
             &AdapterConfig::default(),
             FixtureTransport::new,
-            ScriptedRunner::new,
+            ScriptedShellRunner::new,
         )
     }
 

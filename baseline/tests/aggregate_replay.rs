@@ -5,7 +5,7 @@ use parallax_baseline::adapters::artifact::{ArtifactDetail, MetricsArtifactAdapt
 use parallax_baseline::adapters::factory::{from_manifest_with, AdapterConfig};
 use parallax_baseline::adapters::http::FixtureTransport;
 use parallax_baseline::adapters::verification::{
-    CommandOutput, ScriptedRunner, VerificationOutcome,
+    CommandOutput, ScriptedShellRunner, VerificationOutcome,
 };
 use parallax_baseline::adapters::work::{check_runs_url, issues_url, pulls_url, GithubWorkAdapter};
 use parallax_baseline::autonomy::{no_claim, Implement, Merge};
@@ -141,7 +141,7 @@ fn ttui_adapters(validated: &Validated) -> ProjectAdapters {
         &AdapterConfig::default(),
         github_transport,
         || {
-            let mut r = ScriptedRunner::new();
+            let mut r = ScriptedShellRunner::new();
             if call.replace(call.get() + 1) == 0 {
                 r.push(CommandOutput {
                     status: 0,

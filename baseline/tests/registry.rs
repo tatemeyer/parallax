@@ -4,7 +4,7 @@
 
 use parallax_baseline::adapters::factory::{from_manifest_with, AdapterConfig};
 use parallax_baseline::adapters::http::FixtureTransport;
-use parallax_baseline::adapters::verification::ScriptedRunner;
+use parallax_baseline::adapters::verification::ScriptedShellRunner;
 use parallax_baseline::registry::Registry;
 use parallax_baseline::state::{aggregate, ProjectAdapters};
 use parallax_baseline::validate::Validated;
@@ -186,7 +186,7 @@ fn a_directory_on_disk_aggregates_into_platform_state() {
                 &p.manifest,
                 &AdapterConfig::default(),
                 FixtureTransport::new,
-                ScriptedRunner::new,
+                ScriptedShellRunner::new,
             );
             (p.manifest.clone(), adapters)
         })

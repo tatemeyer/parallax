@@ -84,18 +84,31 @@ pub struct CommandOutput {
     pub stderr: String,
 }
 
-/// Something that can run a shell command.
-pub trait CommandRunner {
+/// Something that can run a **shell** command.
+///
+/// **For manifest-declared commands only** — trust tier 2 in
+/// `docs/design/specs/parallax/2026-08-21-what-an-action-may-name-design.md`.
+/// A `verification[].command` lives in the repository it describes,
+/// under that repository's review, so it is trusted *as code* because it
+/// is code, and it genuinely needs a shell: SESH declares `cd surfaces
+/// && npm test && npm run build`, which is two commands and a directory
+/// change, not an argv.
+///
+/// **Nothing the platform constructs may come through here**, and
+/// nothing carrying a value that arrived from outside — a wire field, or
+/// something the operator typed. Those go to [`ProgramRunner`], which
+/// has no interpreter in the middle. See its doc for what that buys.
+pub trait ShellRunner {
     /// Runs `command` with `cwd` as the working directory.
     fn run(&mut self, command: &str, cwd: &Path) -> std::io::Result<CommandOutput>;
 }
 
-/// The real runner. Invokes the platform shell so a command's quoting
-/// and `--` separators survive verbatim.
+/// The real shell runner. Invokes the platform shell so a command's
+/// quoting and `--` separators survive verbatim.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct ProcessRunner;
+pub struct ProcessShellRunner;
 
-impl CommandRunner for ProcessRunner {
+impl ShellRunner for ProcessShellRunner {
     fn run(&mut self, command: &str, cwd: &Path) -> std::io::Result<CommandOutput> {
         let output = if cfg!(windows) {
             Command::new("cmd")
@@ -118,17 +131,17 @@ impl CommandRunner for ProcessRunner {
     }
 }
 
-/// A runner that replays scripted outputs. Public so integration tests
-/// and frontend demos can both reach it.
+/// A shell runner that replays scripted outputs. Public so integration
+/// tests and frontend demos can both reach it.
 #[derive(Debug, Default)]
-pub struct ScriptedRunner {
+pub struct ScriptedShellRunner {
     outputs: std::collections::VecDeque<CommandOutput>,
     next_error: Option<std::io::Error>,
     calls: Vec<String>,
     cwds: Vec<PathBuf>,
 }
 
-impl ScriptedRunner {
+impl ScriptedShellRunner {
     /// An empty runner. Running with nothing queued yields exit 0.
     pub fn new() -> Self {
         Self::default()
@@ -157,7 +170,7 @@ impl ScriptedRunner {
     }
 }
 
-impl CommandRunner for ScriptedRunner {
+impl ShellRunner for ScriptedShellRunner {
     fn run(&mut self, command: &str, cwd: &Path) -> std::io::Result<CommandOutput> {
         self.calls.push(command.to_string());
         self.cwds.push(cwd.to_path_buf());
@@ -172,14 +185,144 @@ impl CommandRunner for ScriptedRunner {
     }
 }
 
-/// Runs a declared command and reads its exit status.
-pub struct CommandVerificationAdapter<R: CommandRunner> {
+/// One invocation of a program: what to run, and the arguments it was
+/// given as separate strings.
+///
+/// The point of the type is that the arguments are a `Vec`, not a
+/// sentence. A test asserting an invocation is asserting *how many
+/// arguments there were*, which is the property a shell string cannot
+/// express and the reason a payload can no longer hide inside one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invocation {
+    /// The program to run.
+    pub program: String,
+    /// Its arguments, one per element.
+    pub args: Vec<String>,
+}
+
+impl Invocation {
+    /// An invocation of `program` with `args`.
+    pub fn new<I, S>(program: impl Into<String>, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            program: program.into(),
+            args: args.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+/// Something that can run a program **with arguments, and no shell**.
+///
+/// **This is where everything the platform constructs goes**, and
+/// everything carrying a value that arrived from outside it: an action's
+/// parameters off the wire, and whatever the operator typed at a prompt.
+/// See
+/// `docs/design/specs/parallax/2026-08-21-what-an-action-may-name-design.md`.
+///
+/// The difference from [`ShellRunner`] is not degree. A shell string has
+/// to be *parsed* to find out how many commands are in it, so a value
+/// interpolated into one can add commands that were never intended —
+/// which is exactly how a `scenario` field became a remote shell. An
+/// argument list has no such question in it: the count is fixed before
+/// the process starts, and a payload lands in one element rather than
+/// becoming several.
+///
+/// Note that this deletes the class rather than filtering it. There is
+/// no escaping here and there should not be: escaping is a denylist,
+/// and this platform runs on both `sh` and `cmd`, whose quoting rules
+/// differ.
+pub trait ProgramRunner {
+    /// Runs `program` with `args`, in `cwd`.
+    fn run(&mut self, program: &str, args: &[&str], cwd: &Path) -> std::io::Result<CommandOutput>;
+}
+
+/// The real program runner. Spawns the program directly.
+///
+/// No `cfg!(windows)` fork, unlike [`ProcessShellRunner`] — that fork
+/// existed only to pick between `sh -c` and `cmd /C`, and there is no
+/// interpreter to pick any more. One code path on both platforms is a
+/// consequence of the design rather than a tidy-up.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ProcessProgramRunner;
+
+impl ProgramRunner for ProcessProgramRunner {
+    fn run(&mut self, program: &str, args: &[&str], cwd: &Path) -> std::io::Result<CommandOutput> {
+        let output = Command::new(program).args(args).current_dir(cwd).output()?;
+        Ok(CommandOutput {
+            status: output.status.code().unwrap_or(1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+}
+
+/// A program runner that records invocations and replays scripted
+/// outputs. The [`ScriptedShellRunner`] of the other tier.
+#[derive(Debug, Default)]
+pub struct ScriptedProgramRunner {
+    outputs: std::collections::VecDeque<CommandOutput>,
+    next_error: Option<std::io::Error>,
+    calls: Vec<Invocation>,
+    cwds: Vec<PathBuf>,
+}
+
+impl ScriptedProgramRunner {
+    /// An empty runner. Running with nothing queued yields exit 0.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Queues one output.
+    pub fn push(&mut self, output: CommandOutput) {
+        self.outputs.push_back(output);
+    }
+
+    /// Makes the next run fail to spawn, once.
+    pub fn fail_next(&mut self, error: std::io::Error) {
+        self.next_error = Some(error);
+    }
+
+    /// Every invocation this runner was asked to perform, in order.
+    pub fn calls(&self) -> &[Invocation] {
+        &self.calls
+    }
+
+    /// The working directory each call was made in, in the same order.
+    pub fn cwds(&self) -> &[PathBuf] {
+        &self.cwds
+    }
+}
+
+impl ProgramRunner for ScriptedProgramRunner {
+    fn run(&mut self, program: &str, args: &[&str], cwd: &Path) -> std::io::Result<CommandOutput> {
+        self.calls
+            .push(Invocation::new(program, args.iter().copied()));
+        self.cwds.push(cwd.to_path_buf());
+        if let Some(e) = self.next_error.take() {
+            return Err(e);
+        }
+        Ok(self.outputs.pop_front().unwrap_or(CommandOutput {
+            status: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        }))
+    }
+}
+
+/// Runs a manifest-declared command and reads its exit status.
+///
+/// Tier 2: the command is a string from a `parallax.yaml`, so it runs
+/// through a [`ShellRunner`] deliberately. See that trait's doc.
+pub struct CommandVerificationAdapter<R: ShellRunner> {
     kind: String,
     command: String,
     runner: R,
 }
 
-impl<R: CommandRunner> CommandVerificationAdapter<R> {
+impl<R: ShellRunner> CommandVerificationAdapter<R> {
     /// An adapter running `command` and reporting it as `kind`.
     pub fn new(kind: impl Into<String>, command: impl Into<String>, runner: R) -> Self {
         Self {
@@ -195,7 +338,7 @@ impl<R: CommandRunner> CommandVerificationAdapter<R> {
     }
 }
 
-impl<R: CommandRunner> VerificationAdapter for CommandVerificationAdapter<R> {
+impl<R: ShellRunner> VerificationAdapter for CommandVerificationAdapter<R> {
     fn source_name(&self) -> String {
         format!("verification:command:{}", self.kind)
     }
@@ -351,7 +494,7 @@ mod command_tests {
 
     #[test]
     fn exit_zero_is_a_pass() {
-        let mut runner = ScriptedRunner::new();
+        let mut runner = ScriptedShellRunner::new();
         runner.push(ok("test result: ok. 412 passed"));
         let mut a = CommandVerificationAdapter::new("tests", "cargo test", runner);
         let status = a.check(&ctx(), at(0)).unwrap().value;
@@ -361,7 +504,7 @@ mod command_tests {
 
     #[test]
     fn a_nonzero_exit_is_a_fail_carrying_the_last_line_of_output_as_detail() {
-        let mut runner = ScriptedRunner::new();
+        let mut runner = ScriptedShellRunner::new();
         runner.push(CommandOutput {
             status: 101,
             stdout: String::new(),
@@ -378,7 +521,7 @@ mod command_tests {
 
     #[test]
     fn the_command_is_passed_through_unmodified_including_its_double_dash() {
-        let mut runner = ScriptedRunner::new();
+        let mut runner = ScriptedShellRunner::new();
         runner.push(ok(""));
         let command = "cargo clippy --all-targets -- -D warnings";
         let mut a = CommandVerificationAdapter::new("lint", command, runner);
@@ -391,7 +534,7 @@ mod command_tests {
     /// never upgraded.
     #[test]
     fn a_command_that_cannot_be_spawned_is_a_hold_rather_than_a_fail() {
-        let mut runner = ScriptedRunner::new();
+        let mut runner = ScriptedShellRunner::new();
         runner.fail_next(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "cargo not found",
@@ -406,7 +549,7 @@ mod command_tests {
     /// moment it finished.
     #[test]
     fn a_command_result_is_watched_not_polled() {
-        let mut runner = ScriptedRunner::new();
+        let mut runner = ScriptedShellRunner::new();
         runner.push(ok(""));
         let mut a = CommandVerificationAdapter::new("tests", "true", runner);
         let observed = a.check(&ctx(), at(0)).unwrap();
@@ -419,7 +562,7 @@ mod command_tests {
 
     #[test]
     fn a_command_check_costs_a_process() {
-        let a = CommandVerificationAdapter::new("tests", "cargo test", ScriptedRunner::new());
+        let a = CommandVerificationAdapter::new("tests", "cargo test", ScriptedShellRunner::new());
         assert_eq!(a.cost(), CheckCost::Execute);
     }
 
@@ -459,7 +602,7 @@ mod command_tests {
 
     #[test]
     fn the_source_name_names_the_kind_so_degradation_reporting_can_be_specific() {
-        let a = CommandVerificationAdapter::new("lint", "cargo clippy", ScriptedRunner::new());
+        let a = CommandVerificationAdapter::new("lint", "cargo clippy", ScriptedShellRunner::new());
         assert_eq!(a.source_name(), "verification:command:lint");
     }
 }
